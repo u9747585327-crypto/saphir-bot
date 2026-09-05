@@ -20,6 +20,10 @@ GUILD_SETTINGS_FILE = "data/guild_settings.json"
 # nom du rôle donné pendant qu'un membre est connecté à un salon vocal (doit déjà exister)
 VOICE_ROLE_NAME = "En vocal"
 
+# hub de salons vocaux temporaires
+VOICE_HUB_CATEGORY_NAME = "🎧 VOCAL"
+VOICE_HUB_CHANNEL_NAME = "➕ Créer un salon"
+
 # nom exact du salon-piège anti-bot : quiconque y écrit est expulsé
 HONEYPOT_CHANNEL_NAME = "🍯・ne-pas-écrire-ici"
 

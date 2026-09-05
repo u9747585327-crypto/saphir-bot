@@ -49,6 +49,29 @@ class Honeypot(commands.Cog):
             await interaction.response.send_message("❌ Permissions insuffisantes pour créer le salon.", ephemeral=True)
             return
 
+        already_posted = False
+        async for msg in channel.history(limit=10):
+            if msg.author.id == self.bot.user.id and msg.embeds and msg.embeds[0].footer.text == "Saphir · Honeypot info":
+                already_posted = True
+                break
+
+        if not already_posted:
+            info_embed = discord.Embed(
+                title="🍯 Piège anti-bot",
+                description=(
+                    "Ce salon sert à repérer les **bots** et comptes automatisés qui postent partout sans distinction "
+                    "sur le serveur (raids, spam).\n\n"
+                    "**N'écris jamais ici, même par curiosité** — tout message posté, humain ou bot, "
+                    "entraîne une expulsion immédiate du serveur."
+                ),
+                color=discord.Color(COLORS["gold"]),
+            )
+            info_embed.set_footer(text="Saphir · Honeypot info")
+            try:
+                await channel.send(embed=info_embed)
+            except discord.HTTPException:
+                pass
+
         embed = discord.Embed(
             title="🍯 Configuration du honeypot",
             description=(
