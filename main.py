@@ -39,7 +39,14 @@ async def on_ready():
     print(f"💎 {BOT_NAME} connecté en tant que {bot.user} (ID: {bot.user.id})")
     try:
         synced = await bot.tree.sync()
-        print(f"{len(synced)} commande(s) slash synchronisée(s)")
+        print(f"{len(synced)} commande(s) slash synchronisée(s) globalement (jusqu'à 1h pour apparaître partout)")
+
+        # synchro immédiate sur chaque serveur où le bot est déjà présent, pour ne
+        # pas attendre la propagation globale (souvent lente/mise en cache côté Discord)
+        for guild in bot.guilds:
+            bot.tree.copy_global_to(guild=guild)
+            guild_synced = await bot.tree.sync(guild=guild)
+            print(f"{len(guild_synced)} commande(s) synchronisée(s) instantanément sur {guild.name}")
     except Exception as e:
         print(f"Erreur de synchronisation des commandes : {e}")
 
