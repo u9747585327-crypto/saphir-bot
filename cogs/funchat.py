@@ -72,8 +72,10 @@ async def _generate_ai_reply(history: list, user_content: str):
             reasoning_effort="low",
             reasoning_format="hidden",
         )
-        text = response.choices[0].message.content
+        choice = response.choices[0]
+        text = choice.message.content
         text = text.strip() if isinstance(text, str) else None
+        print(f"🤖 Groq brut : finish_reason={choice.finish_reason} len={len(text) if text else 0} contenu={text!r}")
         return text[:300] if text else None
     except Exception as e:
         print(f"⚠️ Erreur Groq : {e}")
