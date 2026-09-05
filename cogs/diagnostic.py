@@ -5,6 +5,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+import cogs.funchat as funchat
 import storage
 from config import COLORS, LEVEL_ROLES, LOG_CHANNELS
 
@@ -52,6 +53,7 @@ class Diagnostic(commands.Cog):
             lines.append("⚠️ Le rôle du bot est peut-être trop bas dans la liste — monte-le pour éviter des erreurs de permissions.")
 
         lines.append(f"**Stockage** : {'✅ MongoDB connecté' if storage.is_connected() else '⚠️ Fichiers locaux (perdus au redémarrage sur Render)'}")
+        lines.append(f"**Chat IA** : {'✅ Gemini connecté' if funchat.is_ai_enabled() else '⚠️ Réponses toutes faites (pas de GEMINI_API_KEY)'}")
 
         # --- Doublons (nom strictement identique) ---
         role_counts = {}
