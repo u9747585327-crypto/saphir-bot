@@ -1,36 +1,30 @@
+import re
+import unicodedata
+
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 import storage
-from config import (
-    COLORS,
-    EXILE_ROLE_NAME,
-    HIERARCHY_ROLES,
-    HONEYPOT_CHANNEL_NAME,
-    LEVEL_ROLES,
-    LEVELS_CATEGORY_NAME,
-    LOG_CHANNELS,
-    LOGS_CATEGORY_NAME,
-    PERM_JAIL_ROLE_NAME,
-    PERM_UNJAIL_ROLE_NAME,
-    PRISON_CATEGORY_NAME,
-    VOICE_HUB_CATEGORY_NAME,
-    VOICE_HUB_CHANNEL_NAME,
-)
+from config import COLORS, LEVEL_ROLES, LOG_CHANNELS
 
 
-def _check_role(guild: discord.Guild, name: str) -> str:
-    return "✅" if discord.utils.get(guild.roles, name=name) else "❌ manquant"
+def _normalize(text: str) -> str:
+    """Minuscules, sans accents, sans espaces/tirets/soulignés/emoji/déco — pour comparer
+    des noms qui ont pu changer de style/casse/accentuation sans perdre leur sens."""
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    text = text.lower()
+    return re.sub(r"[^a-z0-9]", "", text)
 
 
-def _check_category(guild: discord.Guild, name: str) -> str:
-    return "✅" if discord.utils.get(guild.categories, name=name) else "❌ manquante"
+def _any_contains(names, keyword) -> bool:
+    keyword = _normalize(keyword)
+    return any(keyword in _normalize(n) for n in names)
 
 
-def _check_channel(guild: discord.Guild, name: str) -> str:
-    found = discord.utils.get(guild.text_channels, name=name) or discord.utils.get(guild.voice_channels, name=name)
-    return "✅" if found else "❌ manquant"
+def _check(names, keyword) -> str:
+    return "✅" if _any_contains(names, keyword) else "❌ manquant"
 
 
 class Diagnostic(commands.Cog):
@@ -47,6 +41,10 @@ class Diagnostic(commands.Cog):
         guild = interaction.guild
         lines = []
 
+        role_names = [r.name for r in guild.roles]
+        category_names = [c.name for c in guild.categories]
+        channel_names = [c.name for c in guild.channels]
+
         # --- Bot lui-même ---
         bot_top_role = guild.me.top_role
         lines.append(f"**Rôle du bot** : {bot_top_role.mention} (position {bot_top_role.position}/{len(guild.roles) - 1})")
@@ -55,7 +53,7 @@ class Diagnostic(commands.Cog):
 
         lines.append(f"**Stockage** : {'✅ MongoDB connecté' if storage.is_connected() else '⚠️ Fichiers locaux (perdus au redémarrage sur Render)'}")
 
-        # --- Doublons ---
+        # --- Doublons (nom strictement identique) ---
         role_counts = {}
         for role in guild.roles:
             role_counts[role.name] = role_counts.get(role.name, 0) + 1
@@ -67,39 +65,37 @@ class Diagnostic(commands.Cog):
         dup_channels = [n for n, c in channel_counts.items() if c > 1]
 
         lines.append("")
-        lines.append("**Doublons :**")
+        lines.append("**Doublons (nom strictement identique) :**")
         if dup_roles:
             lines.append(f"❌ Rôles en double ({len(dup_roles)}) : " + ", ".join(f"`{n}` x{role_counts[n]}" for n in dup_roles))
         else:
-            lines.append("✅ Aucun rôle en double (nom exact)")
+            lines.append("✅ Aucun rôle en double")
         if dup_channels:
             lines.append(f"❌ Salons en double ({len(dup_channels)}) : " + ", ".join(f"`{n}` x{channel_counts[n]}" for n in dup_channels))
         else:
-            lines.append("✅ Aucun salon en double (nom exact)")
+            lines.append("✅ Aucun salon en double")
 
-        # --- Fonctionnalités ---
+        # --- Fonctionnalités (recherche par mot-clé, insensible au style/accents/casse) ---
         lines.append("")
-        lines.append("**Fonctionnalités :**")
+        lines.append("**Fonctionnalités** _(détection par mot-clé, tolère les changements de nom/style)_ :")
 
-        lines.append(f"🔒 Prison — catégorie {_check_category(guild, PRISON_CATEGORY_NAME)}, rôle Exilé {_check_role(guild, EXILE_ROLE_NAME)}")
+        lines.append(f"🔒 Prison — catégorie {_check(category_names, 'alcatraz')}, rôle Exilé {_check(role_names, 'exile')}")
 
-        logs_found = sum(1 for c in LOG_CHANNELS.values() if discord.utils.get(guild.text_channels, name=c))
-        lines.append(f"📋 Logs — catégorie {_check_category(guild, LOGS_CATEGORY_NAME)}, {logs_found}/{len(LOG_CHANNELS)} salons")
+        logs_found = sum(1 for c in LOG_CHANNELS.values() if _any_contains(channel_names, c))
+        lines.append(f"📋 Logs — catégorie {_check(category_names, 'logs')}, {logs_found}/{len(LOG_CHANNELS)} salons")
 
-        level_roles_found = sum(1 for _, n, _ in LEVEL_ROLES if discord.utils.get(guild.roles, name=n))
-        lines.append(f"📊 Niveaux — catégorie {_check_category(guild, LEVELS_CATEGORY_NAME)}, {level_roles_found}/{len(LEVEL_ROLES)} rôles de niveau")
+        level_roles_found = sum(1 for _, n, _ in LEVEL_ROLES if _any_contains(role_names, n))
+        lines.append(f"📊 Niveaux — catégorie {_check(category_names, 'niveaux')}, {level_roles_found}/{len(LEVEL_ROLES)} rôles de niveau")
 
-        lines.append(f"🍯 Honeypot — salon {_check_channel(guild, HONEYPOT_CHANNEL_NAME)}")
+        lines.append(f"🍯 Honeypot — salon {_check(channel_names, 'ecrireici')}")
 
+        lines.append(f"🎧 Hub vocal — catégorie {_check(category_names, 'vocal')}, salon {_check(channel_names, 'creerunsalon')}")
+
+        hierarchy_keywords = ["fondateur", "commandant", "adminvocal", "adminchat", "membre"]
+        hierarchy_found = sum(1 for kw in hierarchy_keywords if _any_contains(role_names, kw))
         lines.append(
-            f"🎧 Hub vocal — catégorie {_check_category(guild, VOICE_HUB_CATEGORY_NAME)}, "
-            f"salon {_check_channel(guild, VOICE_HUB_CHANNEL_NAME)}"
-        )
-
-        hierarchy_found = sum(1 for n, _, _ in HIERARCHY_ROLES if discord.utils.get(guild.roles, name=n))
-        lines.append(
-            f"🎖️ Hiérarchie — {hierarchy_found}/{len(HIERARCHY_ROLES)} rôles, "
-            f"Perm Jail {_check_role(guild, PERM_JAIL_ROLE_NAME)}, Perm Unjail {_check_role(guild, PERM_UNJAIL_ROLE_NAME)}"
+            f"🎖️ Hiérarchie — {hierarchy_found}/{len(hierarchy_keywords)} rangs détectés, "
+            f"Perm Jail {_check(role_names, 'permjail')}, Perm Unjail {_check(role_names, 'permunjail')}"
         )
 
         description = "\n".join(lines)
