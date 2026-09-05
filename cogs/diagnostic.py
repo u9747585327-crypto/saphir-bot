@@ -53,7 +53,7 @@ class Diagnostic(commands.Cog):
             lines.append("⚠️ Le rôle du bot est peut-être trop bas dans la liste — monte-le pour éviter des erreurs de permissions.")
 
         lines.append(f"**Stockage** : {'✅ MongoDB connecté' if storage.is_connected() else '⚠️ Fichiers locaux (perdus au redémarrage sur Render)'}")
-        lines.append(f"**Chat IA** : {'✅ Mistral connecté' if funchat.is_ai_enabled() else '⚠️ Réponses toutes faites (pas de MISTRAL_API_KEY)'}")
+        lines.append(f"**Chat IA** : {'✅ Gemini connecté' if funchat.is_ai_enabled() else '⚠️ Réponses toutes faites (pas de GEMINI_API_KEY)'}")
 
         # --- Doublons (nom strictement identique) ---
         role_counts = {}
