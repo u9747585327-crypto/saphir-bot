@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sys
 
 import discord
 from discord.ext import commands
@@ -7,6 +8,11 @@ from dotenv import load_dotenv
 
 from config import BOT_NAME
 from keep_alive import keep_alive
+
+# sur Render (et tout environnement sans vrai terminal), stdout est bufferisé par
+# défaut : les print() restent coincés en mémoire au lieu de s'afficher tout de
+# suite dans les logs. Le mode ligne par ligne force l'affichage immédiat.
+sys.stdout.reconfigure(line_buffering=True)
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
