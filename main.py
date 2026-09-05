@@ -30,6 +30,7 @@ INITIAL_COGS = [
     "cogs.bringall",
     "cogs.honeypot",
     "cogs.prison",
+    "cogs.logs",
 ]
 
 

@@ -4,6 +4,8 @@ COLORS = {
     "saphir": 0x1F6FEB,
     "gold": 0xF0C258,
     "danger": 0xED4245,
+    "success": 0x3BA55D,
+    "grey": 0x99AAB5,
 }
 
 SCAN_DIR = "data/scans"
@@ -27,3 +29,16 @@ PRISON_TEXT_CHANNEL = "🔒・cellule"
 PRISON_VOICE_CHANNEL = "🔒 Isolement"
 EXILE_ROLE_NAME = "⛓️ Exilé"
 PRISON_DATA_FILE = "data/prison.json"
+
+# logs serveur
+LOGS_CATEGORY_NAME = "📋 LOGS"
+LOG_CHANNELS = {
+    "join_leave": "📥・arrivées-départs",
+    "moderation": "🔨・modération",
+    "voice": "🎙️・vocal",
+    "profile": "✏️・pseudos-avatars",
+    "messages": "💬・messages",
+    "roles": "🎭・rôles",
+    "channels": "📁・salons",
+    "server": "⚙️・serveur",
+}
