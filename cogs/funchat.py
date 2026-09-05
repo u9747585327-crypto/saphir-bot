@@ -17,7 +17,7 @@ from config import (
 
 # --- IA Groq (gratuite, palier très généreux : 14 400 requêtes/jour) avec repli
 # automatique sur les réponses toutes faites si la clé manque ou l'appel échoue ---
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_MAX_HISTORY = 6  # nombre de messages (user+assistant confondus) gardés par salon
 GROQ_SYSTEM_INSTRUCTION = (
     "Tu es Saphir, le bot Discord de ce serveur, et tu fais partie de la bande. L'humour du "
