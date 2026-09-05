@@ -1,9 +1,12 @@
+import asyncio
+import io
 import random
 import time
 
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
+from PIL import Image, ImageDraw, ImageFont
 
 from config import (
     COLORS,
@@ -24,6 +27,22 @@ VOICE_XP_MIN, VOICE_XP_MAX = 10, 20
 VOICE_TICK_SECONDS = 60  # fréquence de distribution de l'XP vocal
 VOICE_MIN_HUMANS = 2  # il faut au moins ce nombre d'humains dans le salon pour gagner de l'XP
 
+# rendu de l'image de classement
+CARD_WIDTH = 900
+ROW_HEIGHT = 90
+ROW_GAP = 10
+HEADER_HEIGHT = 100
+PADDING = 20
+AVATAR_SIZE = 64
+
+BG_COLOR = (32, 34, 37)
+ROW_COLOR = (47, 49, 54)
+BAR_BG_COLOR = (60, 63, 68)
+ACCENT_COLOR = (31, 111, 235)  # saphir
+TEXT_COLOR = (255, 255, 255)
+SUBTEXT_COLOR = (185, 187, 190)
+MEDAL_COLORS = [(240, 194, 88), (200, 200, 210), (205, 127, 80)]
+
 
 def xp_needed(level: int) -> int:
     return 5 * (level ** 2) + 50 * level + 100
@@ -31,6 +50,63 @@ def xp_needed(level: int) -> int:
 
 def total_xp(entry: dict) -> int:
     return sum(xp_needed(l) for l in range(entry["level"])) + entry["xp"]
+
+
+def _make_circle_avatar(avatar_bytes: bytes, size: int) -> Image.Image:
+    img = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA").resize((size, size))
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, size, size), fill=255)
+    circled = Image.new("RGBA", (size, size))
+    circled.paste(img, (0, 0), mask)
+    return circled
+
+
+def _render_leaderboard_png(guild_name: str, rows: list) -> io.BytesIO:
+    height = HEADER_HEIGHT + len(rows) * (ROW_HEIGHT + ROW_GAP) + PADDING
+    img = Image.new("RGB", (CARD_WIDTH, height), BG_COLOR)
+    draw = ImageDraw.Draw(img)
+
+    title_font = ImageFont.load_default(size=32)
+    rank_font = ImageFont.load_default(size=24)
+    name_font = ImageFont.load_default(size=22)
+    sub_font = ImageFont.load_default(size=16)
+
+    draw.rectangle((0, 0, CARD_WIDTH, HEADER_HEIGHT), fill=ACCENT_COLOR)
+    draw.text((PADDING, HEADER_HEIGHT / 2 - 18), f"CLASSEMENT - {guild_name}", font=title_font, fill=TEXT_COLOR)
+
+    y = HEADER_HEIGHT + ROW_GAP
+    for i, (name, level, xp, needed, hours, avatar_img) in enumerate(rows):
+        draw.rounded_rectangle((PADDING, y, CARD_WIDTH - PADDING, y + ROW_HEIGHT), radius=14, fill=ROW_COLOR)
+
+        rank_color = MEDAL_COLORS[i] if i < 3 else SUBTEXT_COLOR
+        draw.text((PADDING + 20, y + ROW_HEIGHT / 2 - 14), f"#{i + 1}", font=rank_font, fill=rank_color)
+
+        avatar_x = PADDING + 80
+        avatar_y = y + (ROW_HEIGHT - AVATAR_SIZE) // 2
+        if avatar_img:
+            img.paste(avatar_img, (avatar_x, avatar_y), avatar_img)
+        else:
+            draw.ellipse((avatar_x, avatar_y, avatar_x + AVATAR_SIZE, avatar_y + AVATAR_SIZE), fill=BAR_BG_COLOR)
+
+        text_x = avatar_x + AVATAR_SIZE + 20
+        draw.text((text_x, y + 12), name, font=name_font, fill=TEXT_COLOR)
+        draw.text((text_x, y + 40), f"Niveau {level} · {hours:.1f}h vocal", font=sub_font, fill=SUBTEXT_COLOR)
+
+        bar_x, bar_y, bar_w, bar_h = text_x, y + 66, 300, 10
+        draw.rounded_rectangle((bar_x, bar_y, bar_x + bar_w, bar_y + bar_h), radius=5, fill=BAR_BG_COLOR)
+        progress = min(1.0, xp / needed) if needed else 0
+        if progress > 0:
+            draw.rounded_rectangle(
+                (bar_x, bar_y, bar_x + max(bar_h, int(bar_w * progress)), bar_y + bar_h), radius=5, fill=ACCENT_COLOR
+            )
+        draw.text((bar_x + bar_w + 15, bar_y - 4), f"{xp}/{needed} XP", font=sub_font, fill=SUBTEXT_COLOR)
+
+        y += ROW_HEIGHT + ROW_GAP
+
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    buffer.seek(0)
+    return buffer
 
 
 class Leveling(commands.Cog):
@@ -108,32 +184,39 @@ class Leveling(commands.Cog):
     #  Classement en direct
     # ------------------------------------------------------------------ #
 
-    def _build_leaderboard_embed(self, guild: discord.Guild, guild_data: dict) -> discord.Embed:
+    async def _build_leaderboard_file(self, guild: discord.Guild, guild_data: dict) -> discord.File | None:
         ranking = sorted(guild_data.items(), key=lambda kv: total_xp(kv[1]), reverse=True)[:10]
-
         if not ranking:
-            description = "Personne n'a encore d'XP sur ce serveur."
-        else:
-            medals = ["🥇", "🥈", "🥉"]
-            lines = []
-            for i, (user_id, entry) in enumerate(ranking):
-                member = guild.get_member(int(user_id))
-                name = member.mention if member else f"Utilisateur {user_id}"
-                rank_icon = medals[i] if i < 3 else f"`#{i + 1}`"
-                hours = entry.get("voice_seconds", 0) / 3600
-                lines.append(
-                    f"{rank_icon} {name} — niveau **{entry['level']}** · {total_xp(entry)} XP · {hours:.1f}h vocal"
-                )
-            description = "\n".join(lines)
+            return None
 
-        embed = discord.Embed(title="🏆 Classement du serveur", description=description, color=discord.Color(COLORS["gold"]))
-        if ranking:
-            top_member = guild.get_member(int(ranking[0][0]))
-            if top_member:
-                embed.set_thumbnail(url=top_member.display_avatar.url)
+        rows = []
+        for user_id, entry in ranking:
+            member = guild.get_member(int(user_id))
+            name = member.display_name if member else f"Utilisateur {user_id}"
+            avatar_img = None
+            if member:
+                try:
+                    avatar_bytes = await member.display_avatar.replace(size=128, format="png").read()
+                    avatar_img = _make_circle_avatar(avatar_bytes, AVATAR_SIZE)
+                except (discord.HTTPException, OSError):
+                    avatar_img = None
+            rows.append(
+                (name, entry["level"], entry["xp"], xp_needed(entry["level"]), entry.get("voice_seconds", 0) / 3600, avatar_img)
+            )
+
+        buffer = await asyncio.to_thread(_render_leaderboard_png, guild.name, rows)
+        return discord.File(buffer, filename="classement.png")
+
+    async def _build_leaderboard_payload(self, guild: discord.Guild, guild_data: dict):
+        file = await self._build_leaderboard_file(guild, guild_data)
+        embed = discord.Embed(color=discord.Color(COLORS["gold"]))
         embed.timestamp = discord.utils.utcnow()
         embed.set_footer(text="Dernière mise à jour")
-        return embed
+        if file:
+            embed.set_image(url=f"attachment://{file.filename}")
+        else:
+            embed.description = "Personne n'a encore d'XP sur ce serveur."
+        return embed, file
 
     async def _refresh_leaderboard_for_guild(self, guild: discord.Guild, settings: dict):
         guild_settings = settings.get(str(guild.id), {})
@@ -146,7 +229,7 @@ class Leveling(commands.Cog):
 
         data = load_json(LEVELS_DATA_FILE, {})
         guild_data = data.get(str(guild.id), {})
-        embed = self._build_leaderboard_embed(guild, guild_data)
+        embed, file = await self._build_leaderboard_payload(guild, guild_data)
 
         message = None
         message_id = guild_settings.get("leaderboard_message_id")
@@ -158,13 +241,13 @@ class Leveling(commands.Cog):
 
         if message:
             try:
-                await message.edit(embed=embed)
+                await message.edit(embed=embed, attachments=[file] if file else [])
                 return
             except discord.HTTPException:
                 pass
 
         try:
-            new_message = await channel.send(embed=embed)
+            new_message = await channel.send(embed=embed, file=file) if file else await channel.send(embed=embed)
         except discord.HTTPException:
             return
 
@@ -358,10 +441,14 @@ class Leveling(commands.Cog):
 
     @app_commands.command(name="classement", description="Classement des membres par XP sur ce serveur")
     async def classement(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True)
         data = load_json(LEVELS_DATA_FILE, {})
         guild_data = data.get(str(interaction.guild.id), {})
-        embed = self._build_leaderboard_embed(interaction.guild, guild_data)
-        await interaction.response.send_message(embed=embed)
+        embed, file = await self._build_leaderboard_payload(interaction.guild, guild_data)
+        if file:
+            await interaction.followup.send(embed=embed, file=file)
+        else:
+            await interaction.followup.send(embed=embed)
 
 
 async def setup(bot):
