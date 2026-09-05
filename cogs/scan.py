@@ -7,7 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import SCAN_DIR, COLORS
-from storage import load_json, save_json
+from storage import load_json, save_json, list_json
 
 
 def _safe_name(name: str) -> str:
@@ -122,9 +122,7 @@ class Scan(commands.Cog):
         self.bot = bot
 
     async def scan_autocomplete(self, interaction: discord.Interaction, current: str):
-        if not os.path.isdir(SCAN_DIR):
-            return []
-        files = sorted(os.listdir(SCAN_DIR), reverse=True)
+        files = list_json(SCAN_DIR)
         return [
             app_commands.Choice(name=f, value=f)
             for f in files
@@ -159,7 +157,7 @@ class Scan(commands.Cog):
     @app_commands.command(name="liste-scans", description="Liste les bases de serveur déjà enregistrées par Saphir")
     @app_commands.checks.has_permissions(administrator=True)
     async def liste_scans(self, interaction: discord.Interaction):
-        files = sorted(os.listdir(SCAN_DIR), reverse=True) if os.path.isdir(SCAN_DIR) else []
+        files = list_json(SCAN_DIR)
         if not files:
             await interaction.response.send_message("Aucun scan enregistré. Utilise `/scan-serveur` d'abord.", ephemeral=True)
             return
@@ -177,13 +175,9 @@ class Scan(commands.Cog):
     async def cloner_serveur(self, interaction: discord.Interaction, base: str):
         guild = interaction.guild
         path = os.path.join(SCAN_DIR, base)
-        if not os.path.isfile(path):
-            await interaction.response.send_message("Base introuvable. Utilise `/liste-scans`.", ephemeral=True)
-            return
-
         scan = load_json(path, None)
         if scan is None:
-            await interaction.response.send_message("Fichier de base illisible.", ephemeral=True)
+            await interaction.response.send_message("Base introuvable. Utilise `/liste-scans`.", ephemeral=True)
             return
 
         view = ConfirmView(interaction.user.id)
