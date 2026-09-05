@@ -8,6 +8,8 @@ from discord.ext import commands, tasks
 from config import (
     COLORS,
     EXILE_ROLE_NAME,
+    PERM_JAIL_ROLE_NAME,
+    PERM_UNJAIL_ROLE_NAME,
     PRISON_CATEGORY_NAME,
     PRISON_DATA_FILE,
     PRISON_TEXT_CHANNEL,
@@ -26,6 +28,17 @@ def parse_duration(text: str) -> datetime.timedelta:
     amount = int(match.group(1))
     unit = match.group(2)
     return datetime.timedelta(seconds=amount * UNIT_SECONDS[unit])
+
+
+def _has_jail_access(role_name: str):
+    async def predicate(interaction: discord.Interaction) -> bool:
+        perms = interaction.user.guild_permissions
+        if perms.administrator or perms.moderate_members:
+            return True
+        role = discord.utils.get(interaction.guild.roles, name=role_name)
+        return role is not None and role in interaction.user.roles
+
+    return app_commands.check(predicate)
 
 
 class Prison(commands.Cog):
@@ -179,7 +192,7 @@ class Prison(commands.Cog):
         duree="Durée de la peine, ex : 30s, 10m, 2h, 1d, 1w",
         raison="Raison de l'emprisonnement",
     )
-    @app_commands.checks.has_permissions(moderate_members=True)
+    @_has_jail_access(PERM_JAIL_ROLE_NAME)
     async def jail(
         self,
         interaction: discord.Interaction,
@@ -298,7 +311,7 @@ class Prison(commands.Cog):
 
     @app_commands.command(name="unjail", description="Libère immédiatement un membre d'Alcatraz et lui rend ses rôles")
     @app_commands.describe(membre="Membre à libérer")
-    @app_commands.checks.has_permissions(moderate_members=True)
+    @_has_jail_access(PERM_UNJAIL_ROLE_NAME)
     async def unjail(self, interaction: discord.Interaction, membre: discord.Member):
         guild = interaction.guild
         data = load_json(PRISON_DATA_FILE, {})
@@ -316,11 +329,19 @@ class Prison(commands.Cog):
         await interaction.followup.send(f"🔓 {membre.mention} a été libéré d'Alcatraz.", ephemeral=True)
 
     @setup_prison.error
-    @jail.error
-    @unjail.error
-    async def prison_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+    async def setup_prison_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.MissingPermissions):
             await interaction.response.send_message("Tu n'as pas la permission de faire ça.", ephemeral=True)
+
+    @jail.error
+    @unjail.error
+    async def jail_unjail_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        if isinstance(error, app_commands.CheckFailure):
+            await interaction.response.send_message(
+                "Tu n'as pas la permission de faire ça (il faut être administrateur, avoir la permission "
+                "de modérer les membres, ou avoir le rôle Perm Jail/Perm Unjail).",
+                ephemeral=True,
+            )
 
     # ------------------------------------------------------------------ #
     #  Libération automatique

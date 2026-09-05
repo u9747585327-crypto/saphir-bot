@@ -92,8 +92,70 @@ class AutoRole(commands.Cog):
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
+    @app_commands.command(name="donner-role-a-tous", description="Donne un rôle (n'importe lequel) à tous les membres qui ne l'ont pas encore")
+    @app_commands.describe(role="Rôle à donner à tous")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def donner_role_a_tous(self, interaction: discord.Interaction, role: discord.Role):
+        guild = interaction.guild
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        given, skipped, failed = 0, 0, 0
+        for member in guild.members:
+            if member.bot:
+                continue
+            if role in member.roles:
+                skipped += 1
+                continue
+            try:
+                await member.add_roles(role, reason=f"/donner-role-a-tous par {interaction.user}")
+                given += 1
+            except discord.Forbidden:
+                failed += 1
+
+        embed = discord.Embed(
+            title="✅ Rôle distribué",
+            description=(
+                f"**{given}** membre(s) ont reçu {role.mention}.\n"
+                f"**{skipped}** l'avaient déjà.\n"
+                f"**{failed}** échec(s) (permissions)."
+            ),
+            color=discord.Color(COLORS["saphir"]),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="retirer-role-a-tous", description="Retire un rôle (n'importe lequel) à tous les membres qui l'ont")
+    @app_commands.describe(role="Rôle à retirer à tous")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def retirer_role_a_tous(self, interaction: discord.Interaction, role: discord.Role):
+        guild = interaction.guild
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        removed, skipped, failed = 0, 0, 0
+        for member in guild.members:
+            if role not in member.roles:
+                skipped += 1
+                continue
+            try:
+                await member.remove_roles(role, reason=f"/retirer-role-a-tous par {interaction.user}")
+                removed += 1
+            except discord.Forbidden:
+                failed += 1
+
+        embed = discord.Embed(
+            title="✅ Rôle retiré",
+            description=(
+                f"**{removed}** membre(s) ont perdu {role.mention}.\n"
+                f"**{skipped}** ne l'avaient pas.\n"
+                f"**{failed}** échec(s) (permissions)."
+            ),
+            color=discord.Color(COLORS["saphir"]),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
     @set_role_membre.error
     @donner_role_membre.error
+    @donner_role_a_tous.error
+    @retirer_role_a_tous.error
     async def autorole_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.MissingPermissions):
             await interaction.response.send_message("Seul un administrateur peut utiliser cette commande.", ephemeral=True)
