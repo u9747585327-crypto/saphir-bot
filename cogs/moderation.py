@@ -153,7 +153,14 @@ class Moderation(commands.Cog):
     async def clear(self, interaction: discord.Interaction, nombre: app_commands.Range[int, 1, 100], membre: discord.Member = None):
         await interaction.response.defer(thinking=True, ephemeral=True)
         check = (lambda m: m.author.id == membre.id) if membre else None
-        deleted = await interaction.channel.purge(limit=nombre, check=check)
+        try:
+            deleted = await interaction.channel.purge(limit=nombre, check=check)
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "❌ Le bot n'a pas la permission \"Gérer les messages\" (et/ou \"Voir l'historique\") dans ce salon.",
+                ephemeral=True,
+            )
+            return
         await interaction.followup.send(f"🧹 {len(deleted)} message(s) supprimé(s).", ephemeral=True)
 
     @app_commands.command(name="lock", description="Verrouille ce salon (les membres ne peuvent plus écrire)")
@@ -206,7 +213,22 @@ class Moderation(commands.Cog):
     @slowmode.error
     async def moderation_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message("Tu n'as pas la permission de faire ça.", ephemeral=True)
+            message = "Tu n'as pas la permission de faire ça."
+        else:
+            original = getattr(error, "original", error)
+            if isinstance(original, discord.Forbidden):
+                message = "❌ Le bot n'a pas les permissions nécessaires pour faire ça ici."
+            else:
+                message = f"❌ Une erreur est survenue : {original}"
+            print(f"⚠️ Erreur dans une commande de modération : {original}")
+
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+        except discord.HTTPException:
+            pass
 
 
 async def setup(bot):
