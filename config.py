@@ -101,10 +101,10 @@ STAFF_ROLE_NAMES = ["「🜲・👑 𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」", "�
 PERM_JAIL_ROLE_NAME = "「🜲・⛓️ Perm Jail」"
 PERM_UNJAIL_ROLE_NAME = "「🜲・🔓 Perm Unjail」"
 
-# chat automatique rigolo (réponses toutes faites, sans IA)
-FUNCHAT_CHANCE = 0.05  # probabilité qu'un message déclenche une réponse aléatoire
-FUNCHAT_QUESTION_CHANCE = 0.15  # probabilité qu'une question (message finissant par "?") ait une réponse façon boule magique
-FUNCHAT_COOLDOWN_SECONDS = 45  # anti-spam : un seul déclenchement aléatoire par salon durant ce délai
+# chat automatique (IA si GEMINI_API_KEY est configurée, sinon réponses toutes faites)
+FUNCHAT_CHANCE = 0.20  # probabilité qu'un message déclenche une réponse aléatoire
+FUNCHAT_QUESTION_CHANCE = 0.35  # probabilité qu'une question (message finissant par "?") ait une réponse façon boule magique
+FUNCHAT_COOLDOWN_SECONDS = 15  # anti-spam : un seul déclenchement aléatoire par salon durant ce délai
 
 FUNCHAT_RESPONSES = [
     "Mdrrr t'as raison en vrai 😭",
