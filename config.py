@@ -106,6 +106,11 @@ FUNCHAT_CHANCE = 0.35  # probabilité qu'un message déclenche une réponse alé
 FUNCHAT_QUESTION_CHANCE = 0.50  # probabilité qu'une question (message finissant par "?") ait une réponse façon boule magique
 FUNCHAT_COOLDOWN_SECONDS = 5  # anti-spam : un seul déclenchement aléatoire par salon durant ce délai
 
+# casier : petit historique par membre des vannes de l'IA à son sujet, réutilisé pour
+# des piques qui rappellent un running gag précédent (continuité au lieu de vannes jetables)
+DOSSIER_DATA_FILE = "data/dossiers.json"
+DOSSIER_MAX_ENTRIES = 10  # entrées conservées par membre, les plus anciennes sont supprimées
+
 FUNCHAT_RESPONSES = [
     "Mdrrr t'as raison en vrai 😭",
     "Bah alors, personne pour lui répondre ? 👀",
