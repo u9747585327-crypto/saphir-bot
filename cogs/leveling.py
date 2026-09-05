@@ -167,7 +167,7 @@ class Leveling(commands.Cog):
 
         if message:
             try:
-                await message.edit(embed=embed)
+                await message.edit(embed=embed, attachments=[])
                 return
             except discord.HTTPException:
                 pass
