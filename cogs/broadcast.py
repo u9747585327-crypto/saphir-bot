@@ -39,32 +39,35 @@ class Broadcast(commands.Cog):
 
     @app_commands.command(name="mp-membres", description="Envoie un MP à un membre, un rôle, ou tous les membres du serveur")
     @app_commands.describe(
+        cible="Qui doit recevoir le message",
         message="Contenu du message à envoyer",
-        membre="N'envoyer qu'à ce membre",
-        role="Envoyer à tous les membres ayant ce rôle",
-        tous="Envoyer à tous les membres du serveur (confirmation demandée)",
+        membre="Membre à contacter (si cible = Un membre précis)",
+        role="Rôle à contacter (si cible = Un rôle)",
     )
+    @app_commands.choices(cible=[
+        app_commands.Choice(name="Tout le serveur", value="tous"),
+        app_commands.Choice(name="Un rôle", value="role"),
+        app_commands.Choice(name="Un membre précis", value="membre"),
+    ])
     @app_commands.checks.has_permissions(administrator=True)
     async def mp_membres(
         self,
         interaction: discord.Interaction,
+        cible: app_commands.Choice[str],
         message: str,
         membre: discord.Member = None,
         role: discord.Role = None,
-        tous: bool = False,
     ):
-        chosen = sum(1 for v in (membre, role, tous) if v)
-        if chosen != 1:
-            await interaction.response.send_message(
-                "Précise exactement une cible : `membre`, `role`, ou `tous` (une seule à la fois).",
-                ephemeral=True,
-            )
-            return
-
-        if membre is not None:
+        if cible.value == "membre":
+            if membre is None:
+                await interaction.response.send_message("Précise le paramètre `membre` pour cette cible.", ephemeral=True)
+                return
             targets = [membre]
             label = membre.mention
-        elif role is not None:
+        elif cible.value == "role":
+            if role is None:
+                await interaction.response.send_message("Précise le paramètre `role` pour cette cible.", ephemeral=True)
+                return
             targets = [m for m in role.members if not m.bot]
             label = f"tous les {role.mention} ({len(targets)} membre(s))"
         else:
