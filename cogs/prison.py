@@ -258,27 +258,43 @@ class Prison(commands.Cog):
         exile_role = discord.utils.get(guild.roles, name=EXILE_ROLE_NAME)
         member = guild.get_member(int(user_id))
 
-        if member is not None:
-            try:
-                if exile_role and exile_role in member.roles:
-                    await member.remove_roles(exile_role, reason=reason)
-            except discord.Forbidden:
-                pass
+        if member is None:
+            return
 
-            roles_to_restore = [guild.get_role(rid) for rid in entry.get("role_ids", [])]
-            roles_to_restore = [r for r in roles_to_restore if r is not None]
-            try:
-                if roles_to_restore:
-                    await member.add_roles(*roles_to_restore, reason=reason)
-            except discord.Forbidden:
-                pass
+        try:
+            if exile_role and exile_role in member.roles:
+                await member.remove_roles(exile_role, reason=reason)
+        except discord.Forbidden:
+            pass
 
-            embed = discord.Embed(
-                title="🔓 Libération d'Alcatraz",
-                description=f"{member.mention} a purgé sa peine et retrouve ses rôles.",
-                color=discord.Color(COLORS["saphir"]),
-            )
-            await self._announce(guild, embed)
+        # ajout rôle par rôle (et non en un seul appel) pour qu'un rôle refusé
+        # n'empêche pas la restauration des autres, et pour savoir précisément
+        # ce qui a réellement été restauré
+        restored, failed = [], []
+        for role_id in entry.get("role_ids", []):
+            role = guild.get_role(role_id)
+            if role is None:
+                continue
+            try:
+                await member.add_roles(role, reason=reason)
+                restored.append(role)
+            except discord.Forbidden:
+                failed.append(role)
+
+        description = f"{member.mention} a purgé sa peine."
+        if restored:
+            description += "\n✅ Rôles restaurés : " + ", ".join(r.mention for r in restored)
+        if failed:
+            description += "\n⚠️ Rôles non restaurés (rôle du bot trop bas) : " + ", ".join(r.mention for r in failed)
+        if not entry.get("role_ids"):
+            description += "\nAucun rôle à restaurer (il n'en avait aucun avant le jail)."
+
+        embed = discord.Embed(
+            title="🔓 Libération d'Alcatraz",
+            description=description,
+            color=discord.Color(COLORS["saphir"]),
+        )
+        await self._announce(guild, embed)
 
     @app_commands.command(name="unjail", description="Libère immédiatement un membre d'Alcatraz et lui rend ses rôles")
     @app_commands.describe(membre="Membre à libérer")

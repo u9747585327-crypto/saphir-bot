@@ -46,15 +46,23 @@ class AutoRole(commands.Cog):
 
     @app_commands.command(
         name="donner-role-membre",
-        description="Donne le rôle Membre à tous les membres du serveur qui ne l'ont pas encore",
+        description="Donne un rôle à tous les membres du serveur (et le retient pour les prochains arrivants)",
     )
+    @app_commands.describe(role="Rôle à donner à tous (si omis, utilise le rôle déjà configuré via /set-role-membre)")
     @app_commands.checks.has_permissions(administrator=True)
-    async def donner_role_membre(self, interaction: discord.Interaction):
+    async def donner_role_membre(self, interaction: discord.Interaction, role: discord.Role = None):
         guild = interaction.guild
-        role = get_auto_role(guild)
+
+        if role is not None:
+            settings = load_json(GUILD_SETTINGS_FILE, {})
+            settings.setdefault(str(guild.id), {})["auto_role_id"] = role.id
+            save_json(GUILD_SETTINGS_FILE, settings)
+        else:
+            role = get_auto_role(guild)
+
         if role is None:
             await interaction.response.send_message(
-                "Aucun rôle Membre configuré. Utilise `/set-role-membre` pour en choisir un.", ephemeral=True
+                "Aucun rôle configuré. Relance la commande avec le paramètre `role`.", ephemeral=True
             )
             return
 
