@@ -46,6 +46,7 @@ class Prison(commands.Cog):
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_prison(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True, ephemeral=True)
         guild = interaction.guild
         report = []
 
@@ -63,7 +64,7 @@ class Prison(commands.Cog):
             else:
                 report.append(f"= Rôle déjà présent : {EXILE_ROLE_NAME}")
         except discord.Forbidden:
-            await interaction.response.send_message("❌ Permissions insuffisantes pour créer le rôle Exilé.", ephemeral=True)
+            await interaction.followup.send("❌ Permissions insuffisantes pour créer le rôle Exilé.", ephemeral=True)
             return
 
         overwrites = {
@@ -88,7 +89,7 @@ class Prison(commands.Cog):
                 await category.edit(overwrites=overwrites, reason="Configuration de la prison (Saphir)")
                 report.append(f"🔄 Catégorie mise à jour : {PRISON_CATEGORY_NAME}")
         except discord.Forbidden:
-            await interaction.response.send_message("❌ Permissions insuffisantes pour créer la catégorie.", ephemeral=True)
+            await interaction.followup.send("❌ Permissions insuffisantes pour créer la catégorie.", ephemeral=True)
             return
 
         text_channel = discord.utils.get(category.channels, name=PRISON_TEXT_CHANNEL)
@@ -136,7 +137,7 @@ class Prison(commands.Cog):
             description="\n".join(report),
             color=discord.Color(COLORS["danger"]),
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @staticmethod
     def _alcatraz_channel_ids(category: discord.CategoryChannel) -> set:
