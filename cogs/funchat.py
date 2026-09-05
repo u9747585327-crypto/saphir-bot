@@ -49,33 +49,43 @@ def is_ai_enabled() -> bool:
     return _genai_client is not None
 
 
-def _generate_ai_reply(user_message: str):
-    """Appel bloquant à Gemini — à lancer via asyncio.to_thread. Retourne None si l'IA
-    n'est pas configurée ou si l'appel échoue (clé invalide, quota, réseau...)."""
+def _generate_ai_reply(user_message: str, previous_interaction_id: str = None):
+    """Appel bloquant à Gemini — à lancer via asyncio.to_thread. Retourne (texte, id) où
+    id est l'identifiant de cet échange à repasser au prochain appel du même salon pour
+    que Gemini garde le fil de la conversation. Retourne (None, None) si l'IA n'est pas
+    configurée ou si l'appel échoue (clé invalide, quota, réseau...)."""
     if _genai_client is None:
-        return None
+        return None, None
     try:
-        interaction = _genai_client.interactions.create(
-            model=GEMINI_MODEL,
-            system_instruction=GEMINI_SYSTEM_INSTRUCTION,
-            input=user_message[:500],
-            generation_config={"temperature": 1.0, "max_output_tokens": 200},
-        )
+        kwargs = {
+            "model": GEMINI_MODEL,
+            "system_instruction": GEMINI_SYSTEM_INSTRUCTION,
+            "input": user_message[:500],
+            "generation_config": {"temperature": 1.0, "max_output_tokens": 250},
+        }
+        if previous_interaction_id:
+            kwargs["previous_interaction_id"] = previous_interaction_id
+
+        interaction = _genai_client.interactions.create(**kwargs)
         text = interaction.output_text
         text = text.strip() if text else None
-        return text[:1900] if text else None
+        return (text[:1900] if text else None), getattr(interaction, "id", None)
     except Exception as e:
         print(f"⚠️ Erreur Gemini : {e}")
-        return None
+        return None, None
 
 
 class FunChat(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.last_reply = {}
+        self.last_interaction_id = {}
 
     async def _reply(self, message: discord.Message, fallback_pool: list):
-        reply = await asyncio.to_thread(_generate_ai_reply, message.content.strip())
+        previous_id = self.last_interaction_id.get(message.channel.id)
+        reply, interaction_id = await asyncio.to_thread(_generate_ai_reply, message.content.strip(), previous_id)
+        if interaction_id:
+            self.last_interaction_id[message.channel.id] = interaction_id
         if not reply:
             reply = random.choice(fallback_pool)
         try:
