@@ -65,26 +65,27 @@ LEVEL_ROLES = [
 ]
 
 # hiérarchie de rôles visibles (hoist), permissions Discord natives cumulées,
-# du plus haut rang au plus bas
+# du plus haut rang au plus bas — noms en police grasse sans-serif (rendue nativement
+# par Discord, aucune police externe requise)
 HIERARCHY_ROLES = [
-    ("🌟 Fondateur", 0xF0C258, {"administrator": True}),
-    ("Co-Fondateur", 0xE74C3C, {
+    ("🌟 𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿", 0xF0C258, {"administrator": True}),
+    ("𝗖𝗼-𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿", 0xE74C3C, {
         "ban_members": True, "kick_members": True, "manage_roles": True, "manage_channels": True,
         "manage_guild": True, "moderate_members": True, "manage_messages": True,
         "mute_members": True, "deafen_members": True, "move_members": True,
     }),
-    ("Commandant", 0x9B59B6, {
+    ("𝗖𝗼𝗺𝗺𝗮𝗻𝗱𝗮𝗻𝘁", 0x9B59B6, {
         "kick_members": True, "moderate_members": True, "manage_messages": True,
         "mute_members": True, "deafen_members": True, "move_members": True,
     }),
-    ("Admin Vocal", 0x3498DB, {"mute_members": True, "deafen_members": True, "move_members": True}),
-    ("Admin Chat", 0x1ABC9C, {"manage_messages": True}),
-    ("✨ Membre", 0xC9C3E0, {}),
+    ("𝗔𝗱𝗺𝗶𝗻 𝗩𝗼𝗰𝗮𝗹", 0x3498DB, {"mute_members": True, "deafen_members": True, "move_members": True}),
+    ("𝗔𝗱𝗺𝗶𝗻 𝗖𝗵𝗮𝘁", 0x1ABC9C, {"manage_messages": True}),
+    ("✨ 𝗠𝗲𝗺𝗯𝗿𝗲", 0xC9C3E0, {}),
 ]
 
 # rangs de la hiérarchie qui doivent voir Alcatraz et les Logs (en plus du bypass
 # automatique des détenteurs de la permission Administrateur)
-STAFF_ROLE_NAMES = ["🌟 Fondateur", "Co-Fondateur", "Commandant"]
+STAFF_ROLE_NAMES = ["🌟 𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿", "𝗖𝗼-𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿", "𝗖𝗼𝗺𝗺𝗮𝗻𝗱𝗮𝗻𝘁"]
 
 # rôles de permission autonomes, indépendants du rang, pour débloquer /jail et /unjail
 PERM_JAIL_ROLE_NAME = "⛓️ Perm Jail"
