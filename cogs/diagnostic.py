@@ -91,7 +91,7 @@ class Diagnostic(commands.Cog):
 
         lines.append(f"🎧 Hub vocal — catégorie {_check(category_names, 'vocal')}, salon {_check(channel_names, 'creerunsalon')}")
 
-        hierarchy_keywords = ["fondateur", "commandant", "adminvocal", "adminchat", "membre"]
+        hierarchy_keywords = ["fondateur", "cofondateur", "commandant", "adminvocal", "adminchat", "membre"]
         hierarchy_found = sum(1 for kw in hierarchy_keywords if _any_contains(role_names, kw))
         lines.append(
             f"🎖️ Hiérarchie — {hierarchy_found}/{len(hierarchy_keywords)} rangs détectés, "
