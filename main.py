@@ -37,6 +37,7 @@ INITIAL_COGS = [
     "cogs.moderation",
     "cogs.diagnostic",
     "cogs.osint",
+    "cogs.funchat",
 ]
 
 

@@ -100,3 +100,47 @@ STAFF_ROLE_NAMES = ["「🜲・👑 𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」", "�
 # rôles de permission autonomes, indépendants du rang, pour débloquer /jail et /unjail
 PERM_JAIL_ROLE_NAME = "「🜲・⛓️ Perm Jail」"
 PERM_UNJAIL_ROLE_NAME = "「🜲・🔓 Perm Unjail」"
+
+# chat automatique rigolo (réponses toutes faites, sans IA)
+FUNCHAT_CHANCE = 0.05  # probabilité qu'un message déclenche une réponse aléatoire
+FUNCHAT_QUESTION_CHANCE = 0.15  # probabilité qu'une question (message finissant par "?") ait une réponse façon boule magique
+FUNCHAT_COOLDOWN_SECONDS = 45  # anti-spam : un seul déclenchement aléatoire par salon durant ce délai
+
+FUNCHAT_RESPONSES = [
+    "Mdrrr t'as raison en vrai 😭",
+    "Bah alors, personne pour lui répondre ? 👀",
+    "Ok mais qui a demandé 😂",
+    "Je note ça dans mes archives secrètes 📝",
+    "T'sais quoi, j'approuve. ✅",
+    "Franchement... j'ai envie de dire oui.",
+    "Pas faux.",
+    "Ça sent le vécu ça.",
+    "On m'a jamais dit ça avant 👁️",
+    "Intéressant... très intéressant 🤔",
+    "Je garde ça en mémoire pour te le ressortir plus tard 😏",
+    "Voilà voilà.",
+    "C'est toi qui vois chef.",
+    "Ah bah tiens, ça alors.",
+    "Je dis rien mais je pense fort 👀",
+]
+
+FUNCHAT_8BALL_RESPONSES = [
+    "🎱 Oui, sans hésitation.",
+    "🎱 C'est mal parti pour toi.",
+    "🎱 Demande à quelqu'un d'autre.",
+    "🎱 Les signes sont favorables.",
+    "🎱 Franchement... j'en doute.",
+    "🎱 100% oui.",
+    "🎱 Non, et tu le sais.",
+    "🎱 Réponse floue, retente ta chance.",
+    "🎱 Concentre-toi et redemande.",
+    "🎱 N'y compte pas trop.",
+]
+
+FUNCHAT_MENTION_RESPONSES = [
+    "Ouais je suis là, calme-toi 😌",
+    "Quoi encore ?",
+    "Présent ! (malheureusement)",
+    "Tu m'as appelé ? Flatté.",
+    "Oui chef, qu'est-ce qu'il y a ?",
+]
