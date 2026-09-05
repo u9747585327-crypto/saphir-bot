@@ -32,6 +32,7 @@ INITIAL_COGS = [
     "cogs.honeypot",
     "cogs.prison",
     "cogs.logs",
+    "cogs.leveling",
 ]
 
 

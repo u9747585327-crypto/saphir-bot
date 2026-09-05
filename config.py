@@ -46,3 +46,7 @@ LOG_CHANNELS = {
     "channels": "📁・salons",
     "server": "⚙️・serveur",
 }
+
+# niveaux (XP texte + vocal cumulés)
+LEVELS_DATA_FILE = "data/levels.json"
+LEVEL_UP_CHANNEL_NAME = "🎉・niveaux"
