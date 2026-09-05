@@ -68,7 +68,9 @@ async def _generate_ai_reply(history: list, user_content: str):
             model=GROQ_MODEL,
             messages=messages,
             temperature=1.05,
-            max_tokens=60,
+            max_completion_tokens=150,
+            reasoning_effort="low",
+            reasoning_format="hidden",
         )
         text = response.choices[0].message.content
         text = text.strip() if isinstance(text, str) else None
