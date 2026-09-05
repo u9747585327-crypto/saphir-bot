@@ -104,7 +104,7 @@ PERM_UNJAIL_ROLE_NAME = "「🜲・🔓 Perm Unjail」"
 # chat automatique (IA si GEMINI_API_KEY est configurée, sinon réponses toutes faites)
 FUNCHAT_CHANCE = 0.20  # probabilité qu'un message déclenche une réponse aléatoire
 FUNCHAT_QUESTION_CHANCE = 0.35  # probabilité qu'une question (message finissant par "?") ait une réponse façon boule magique
-FUNCHAT_COOLDOWN_SECONDS = 15  # anti-spam : un seul déclenchement aléatoire par salon durant ce délai
+FUNCHAT_COOLDOWN_SECONDS = 5  # anti-spam : un seul déclenchement aléatoire par salon durant ce délai
 
 FUNCHAT_RESPONSES = [
     "Mdrrr t'as raison en vrai 😭",
