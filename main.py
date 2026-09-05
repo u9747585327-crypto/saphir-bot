@@ -38,21 +38,36 @@ INITIAL_COGS = [
 ]
 
 
+async def _sync_all(guild=None):
+    """Copie les commandes vers un serveur précis (ou tous ceux déjà rejoints), puis
+    vide la liste globale côté Discord. On ne synchronise plus jamais en global : avoir
+    à la fois des commandes globales ET des commandes par serveur fait que Discord les
+    affiche en double dans un même serveur."""
+    guilds = [guild] if guild else bot.guilds
+    for g in guilds:
+        bot.tree.copy_global_to(guild=g)
+        synced = await bot.tree.sync(guild=g)
+        print(f"{len(synced)} commande(s) synchronisée(s) sur {g.name}")
+
+    bot.tree.clear_commands(guild=None)
+    await bot.tree.sync()
+
+
 @bot.event
 async def on_ready():
     print(f"💎 {BOT_NAME} connecté en tant que {bot.user} (ID: {bot.user.id})")
     try:
-        synced = await bot.tree.sync()
-        print(f"{len(synced)} commande(s) slash synchronisée(s) globalement (jusqu'à 1h pour apparaître partout)")
-
-        # synchro immédiate sur chaque serveur où le bot est déjà présent, pour ne
-        # pas attendre la propagation globale (souvent lente/mise en cache côté Discord)
-        for guild in bot.guilds:
-            bot.tree.copy_global_to(guild=guild)
-            guild_synced = await bot.tree.sync(guild=guild)
-            print(f"{len(guild_synced)} commande(s) synchronisée(s) instantanément sur {guild.name}")
+        await _sync_all()
     except Exception as e:
         print(f"Erreur de synchronisation des commandes : {e}")
+
+
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    try:
+        await _sync_all(guild)
+    except Exception as e:
+        print(f"Erreur de synchronisation des commandes sur {guild.name} : {e}")
 
 
 async def main():
