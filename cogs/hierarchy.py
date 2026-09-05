@@ -12,6 +12,24 @@ from config import (
     STAFF_ROLE_NAMES,
 )
 
+# migration ponctuelle : anciens noms de rôles (avant l'ajout du style 「🜲・...」)
+# vers leur équivalent stylé actuel. Sert uniquement à /nettoyage-roles.
+LEGACY_ROLE_MIGRATIONS = [
+    ("🌟 Fondateur", "「🜲・👑 𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」"),
+    ("Co-Fondateur", "「🜲・𝗖𝗼-𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」"),
+    ("Commandant", "「🜲・𝗖𝗼𝗺𝗺𝗮𝗻𝗱𝗮𝗻𝘁」"),
+    ("Admin Vocal", "「🜲・𝗔𝗱𝗺𝗶𝗻 𝗩𝗼𝗰𝗮𝗹」"),
+    ("Admin Chat", "「🜲・𝗔𝗱𝗺𝗶𝗻 𝗖𝗵𝗮𝘁」"),
+    ("✨ Membre", "「🜲・✨ 𝗠𝗲𝗺𝗯𝗿𝗲」"),
+    ("🌱 Débutant", "「🜲・🌱 𝗗𝗲𝗯𝘂𝘁𝗮𝗻𝘁」"),
+    ("🌿 Actif", "「🜲・🌿 𝗔𝗰𝘁𝗶𝗳」"),
+    ("🌳 Vétéran", "「🜲・🌳 𝗩𝗲𝘁𝗲𝗿𝗮𝗻」"),
+    ("⭐ Élite", "「🜲・⭐ 𝗘𝗹𝗶𝘁𝗲」"),
+    ("👑 Légende", "「🜲・👑 𝗟𝗲𝗴𝗲𝗻𝗱𝗲」"),
+    ("⛓️ Perm Jail", "「🜲・⛓️ Perm Jail」"),
+    ("🔓 Perm Unjail", "「🜲・🔓 Perm Unjail」"),
+]
+
 
 class Hierarchy(commands.Cog):
     def __init__(self, bot):
@@ -97,6 +115,56 @@ class Hierarchy(commands.Cog):
 
     @setup_roles.error
     async def setup_roles_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        if isinstance(error, app_commands.MissingPermissions):
+            await interaction.response.send_message("Seul un administrateur peut utiliser cette commande.", ephemeral=True)
+
+    @app_commands.command(
+        name="nettoyage-roles",
+        description="Transfère les membres des anciens rôles (avant le style) vers les nouveaux, puis supprime les anciens",
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def nettoyage_roles(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        guild = interaction.guild
+        report = []
+
+        for old_name, new_name in LEGACY_ROLE_MIGRATIONS:
+            old_role = discord.utils.get(guild.roles, name=old_name)
+            if old_role is None:
+                continue
+
+            new_role = discord.utils.get(guild.roles, name=new_name)
+            if new_role is None:
+                report.append(f"⚠️ `{old_name}` trouvé mais pas de nouveau rôle `{new_name}` — lance /setup-roles ou /setup-niveaux d'abord")
+                continue
+
+            moved = 0
+            for member in list(old_role.members):
+                if new_role not in member.roles:
+                    try:
+                        await member.add_roles(new_role, reason="Migration vers le rôle stylé (Saphir)")
+                        moved += 1
+                    except discord.Forbidden:
+                        pass
+
+            try:
+                await old_role.delete(reason="Nettoyage après migration vers le rôle stylé (Saphir)")
+                report.append(f"✅ `{old_name}` → `{new_name}` ({moved} membre(s) transféré(s), ancien rôle supprimé)")
+            except discord.Forbidden:
+                report.append(f"❌ Impossible de supprimer `{old_name}` (permissions)")
+
+        if not report:
+            report.append("Rien à nettoyer — aucun ancien rôle trouvé.")
+
+        embed = discord.Embed(
+            title="🧹 Nettoyage des rôles",
+            description="\n".join(report),
+            color=discord.Color(COLORS["saphir"]),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @nettoyage_roles.error
+    async def nettoyage_roles_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.MissingPermissions):
             await interaction.response.send_message("Seul un administrateur peut utiliser cette commande.", ephemeral=True)
 
