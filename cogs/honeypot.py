@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from config import HONEYPOT_CHANNEL_NAME, COLORS
@@ -21,6 +22,48 @@ def build_honeypot_embed(member: discord.Member) -> discord.Embed:
 class Honeypot(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    @app_commands.command(
+        name="setup-honeypot",
+        description="Crée (ou vérifie) le salon piège anti-bot",
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def setup_honeypot(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        channel = discord.utils.get(guild.text_channels, name=HONEYPOT_CHANNEL_NAME)
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+        }
+
+        try:
+            if channel is None:
+                channel = await guild.create_text_channel(
+                    HONEYPOT_CHANNEL_NAME, overwrites=overwrites, reason="Configuration honeypot (Saphir)"
+                )
+                status = f"✅ Salon créé : {channel.mention}"
+            else:
+                await channel.edit(overwrites=overwrites, reason="Configuration honeypot (Saphir)")
+                status = f"🔄 Salon déjà présent, permissions vérifiées : {channel.mention}"
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Permissions insuffisantes pour créer le salon.", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title="🍯 Configuration du honeypot",
+            description=(
+                f"{status}\n\n"
+                "N'importe quel message envoyé dans ce salon (par un humain ou un bot) "
+                "entraîne la suppression du message et l'expulsion de son auteur."
+            ),
+            color=discord.Color(COLORS["saphir"]),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @setup_honeypot.error
+    async def setup_honeypot_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        if isinstance(error, app_commands.MissingPermissions):
+            await interaction.response.send_message("Seul un administrateur peut utiliser cette commande.", ephemeral=True)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
