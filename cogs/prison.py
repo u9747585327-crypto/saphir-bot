@@ -81,7 +81,14 @@ class Prison(commands.Cog):
             return
 
         overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            # les membres voient Alcatraz (texte + vocal) mais ne peuvent ni écrire
+            # ni rejoindre le vocal — seul le rôle Exilé peut vraiment y participer
+            guild.default_role: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=False,
+                read_message_history=True,
+                connect=False,
+            ),
             exile_role: discord.PermissionOverwrite(
                 view_channel=True,
                 send_messages=True,
