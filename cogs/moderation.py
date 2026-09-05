@@ -152,9 +152,11 @@ class Moderation(commands.Cog):
     @app_commands.checks.has_permissions(manage_messages=True)
     async def clear(self, interaction: discord.Interaction, nombre: app_commands.Range[int, 1, 100], membre: discord.Member = None):
         await interaction.response.defer(thinking=True, ephemeral=True)
-        check = (lambda m: m.author.id == membre.id) if membre else None
+        purge_kwargs = {"limit": nombre}
+        if membre:
+            purge_kwargs["check"] = lambda m: m.author.id == membre.id
         try:
-            deleted = await interaction.channel.purge(limit=nombre, check=check)
+            deleted = await interaction.channel.purge(**purge_kwargs)
         except discord.Forbidden:
             await interaction.followup.send(
                 "❌ Le bot n'a pas la permission \"Gérer les messages\" (et/ou \"Voir l'historique\") dans ce salon.",
