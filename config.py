@@ -50,3 +50,15 @@ LOG_CHANNELS = {
 # niveaux (XP texte + vocal cumulés)
 LEVELS_DATA_FILE = "data/levels.json"
 LEVEL_UP_CHANNEL_NAME = "🎉・niveaux"
+LEADERBOARD_CHANNEL_NAME = "🏆・classement"
+LEADERBOARD_REFRESH_SECONDS = 300
+
+# paliers de rôles automatiques : (niveau requis, nom du rôle, couleur)
+# stockés par ID dans data/guild_settings.json une fois créés, donc renommables sans risque
+LEVEL_ROLES = [
+    (5, "🌱 Débutant", 0x2ECC71),
+    (10, "🌿 Actif", 0x1ABC9C),
+    (20, "🌳 Vétéran", 0x3498DB),
+    (35, "⭐ Élite", 0x9B59B6),
+    (50, "👑 Légende", 0xF1C40F),
+]
