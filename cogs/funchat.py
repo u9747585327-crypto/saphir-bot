@@ -1,4 +1,3 @@
-import asyncio
 import os
 import random
 import time
@@ -16,9 +15,11 @@ from config import (
     HONEYPOT_CHANNEL_NAME,
 )
 
-# --- IA Gemini (gratuite) avec repli automatique sur les réponses toutes faites ---
-GEMINI_MODEL = "gemini-3.8-flash"
-GEMINI_SYSTEM_INSTRUCTION = (
+# --- IA Groq (gratuite, palier très généreux : 14 400 requêtes/jour) avec repli
+# automatique sur les réponses toutes faites si la clé manque ou l'appel échoue ---
+GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MAX_HISTORY = 6  # nombre de messages (user+assistant confondus) gardés par salon
+GROQ_SYSTEM_INSTRUCTION = (
     "Tu es Saphir, le bot Discord de ce serveur, et tu fais partie de la bande. L'humour du "
     "serveur c'est le clash cash entre potes : tu balances des vannes mordantes et bien "
     "senties directement sur ce que la personne vient d'écrire, mauvaise foi totalement "
@@ -28,66 +29,71 @@ GEMINI_SYSTEM_INSTRUCTION = (
     "d'acharnement répété sur la même personne. Tu ne rebondis jamais sur des propos "
     "réellement haineux, violents ou explicites (tu recadres sèchement à la place). Réponds "
     "TOUJOURS en français, en une seule phrase complète et percutante (jamais coupée, "
-    "jamais deux phrases), ton direct et familier, zéro conseil sérieux, zéro blabla."
+    "jamais deux phrases), ton direct et familier, zéro conseil sérieux, zéro blabla. Tu te "
+    "souviens de ce qui vient d'être dit dans la conversation et tu peux enchaîner dessus."
 )
 
-_GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-_genai_client = None
+_GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+_groq_client = None
 
-if _GEMINI_API_KEY:
+if _GROQ_API_KEY:
     try:
-        from google import genai
+        from groq import AsyncGroq
 
-        _genai_client = genai.Client(api_key=_GEMINI_API_KEY)
-        print("🤖 FunChat : IA Gemini activée")
+        _groq_client = AsyncGroq(api_key=_GROQ_API_KEY)
+        print("🤖 FunChat : IA Groq activée")
     except Exception as e:
-        print(f"⚠️ GEMINI_API_KEY fourni mais initialisation impossible ({e}) — repli sur les réponses toutes faites")
-        _genai_client = None
+        print(f"⚠️ GROQ_API_KEY fourni mais initialisation impossible ({e}) — repli sur les réponses toutes faites")
+        _groq_client = None
 
 
 def is_ai_enabled() -> bool:
-    return _genai_client is not None
+    return _groq_client is not None
 
 
-def _generate_ai_reply(user_message: str, previous_interaction_id: str = None):
-    """Appel bloquant à Gemini — à lancer via asyncio.to_thread. Retourne (texte, id) où
-    id est l'identifiant de cet échange à repasser au prochain appel du même salon pour
-    que Gemini garde le fil de la conversation. Retourne (None, None) si l'IA n'est pas
-    configurée ou si l'appel échoue (clé invalide, quota, réseau...)."""
-    if _genai_client is None:
-        return None, None
+async def _generate_ai_reply(history: list, user_content: str):
+    """Retourne None si l'IA n'est pas configurée ou si l'appel échoue (clé invalide,
+    quota, réseau...) — le repli sur les réponses toutes faites prend alors le relais."""
+    if _groq_client is None:
+        return None
     try:
-        kwargs = {
-            "model": GEMINI_MODEL,
-            "system_instruction": GEMINI_SYSTEM_INSTRUCTION,
-            "input": user_message[:500],
-            "generation_config": {"temperature": 1.0, "max_output_tokens": 250},
-        }
-        if previous_interaction_id:
-            kwargs["previous_interaction_id"] = previous_interaction_id
+        messages = [{"role": "system", "content": GROQ_SYSTEM_INSTRUCTION}]
+        messages.extend(history)
+        messages.append({"role": "user", "content": user_content[:500]})
 
-        interaction = _genai_client.interactions.create(**kwargs)
-        text = interaction.output_text
-        text = text.strip() if text else None
-        return (text[:1900] if text else None), getattr(interaction, "id", None)
+        response = await _groq_client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=messages,
+            temperature=1.0,
+            max_tokens=250,
+        )
+        text = response.choices[0].message.content
+        text = text.strip() if isinstance(text, str) else None
+        return text[:1900] if text else None
     except Exception as e:
-        print(f"⚠️ Erreur Gemini : {e}")
-        return None, None
+        print(f"⚠️ Erreur Groq : {e}")
+        return None
 
 
 class FunChat(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.last_reply = {}
-        self.last_interaction_id = {}
+        self.history = {}
 
     async def _reply(self, message: discord.Message, fallback_pool: list):
-        previous_id = self.last_interaction_id.get(message.channel.id)
-        reply, interaction_id = await asyncio.to_thread(_generate_ai_reply, message.content.strip(), previous_id)
-        if interaction_id:
-            self.last_interaction_id[message.channel.id] = interaction_id
-        if not reply:
+        channel_id = message.channel.id
+        history = self.history.setdefault(channel_id, [])
+        user_content = message.content.strip()
+
+        reply = await _generate_ai_reply(history, user_content)
+        if reply:
+            history.append({"role": "user", "content": user_content[:500]})
+            history.append({"role": "assistant", "content": reply})
+            del history[:-GROQ_MAX_HISTORY]
+        else:
             reply = random.choice(fallback_pool)
+
         try:
             await message.reply(reply, mention_author=False)
         except discord.HTTPException:
