@@ -209,23 +209,22 @@ class Prison(commands.Cog):
         raison: str = "Non spécifiée",
     ):
         guild = interaction.guild
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         try:
             delta = parse_duration(duree)
         except ValueError as e:
-            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ {e}", ephemeral=True)
             return
 
         exile_role = discord.utils.get(guild.roles, name=EXILE_ROLE_NAME)
         if exile_role is None:
-            await interaction.response.send_message("Le rôle Exilé n'existe pas. Lance `/setup-prison` d'abord.", ephemeral=True)
+            await interaction.followup.send("Le rôle Exilé n'existe pas. Lance `/setup-prison` d'abord.", ephemeral=True)
             return
 
         if exile_role in membre.roles:
-            await interaction.response.send_message(f"{membre.mention} est déjà à Alcatraz. Utilise `/unjail` d'abord si besoin.", ephemeral=True)
+            await interaction.followup.send(f"{membre.mention} est déjà à Alcatraz. Utilise `/unjail` d'abord si besoin.", ephemeral=True)
             return
-
-        await interaction.response.defer(thinking=True, ephemeral=True)
 
         removable_roles = [r for r in membre.roles if not r.is_default() and not r.managed]
         unjail_at = datetime.datetime.now(datetime.timezone.utc) + delta
@@ -359,15 +358,16 @@ class Prison(commands.Cog):
     @_has_jail_access(PERM_UNJAIL_ROLE_NAME)
     async def unjail(self, interaction: discord.Interaction, membre: discord.Member):
         guild = interaction.guild
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
         data = load_json(PRISON_DATA_FILE, {})
         guild_data = data.get(str(guild.id), {})
         entry = guild_data.pop(str(membre.id), None)
 
         if entry is None:
-            await interaction.response.send_message(f"{membre.mention} n'est pas à Alcatraz.", ephemeral=True)
+            await interaction.followup.send(f"{membre.mention} n'est pas à Alcatraz.", ephemeral=True)
             return
 
-        await interaction.response.defer(thinking=True, ephemeral=True)
         await self._release(guild, str(membre.id), entry, reason=f"Libéré manuellement par {interaction.user}")
         save_json(PRISON_DATA_FILE, data)
 
@@ -382,11 +382,25 @@ class Prison(commands.Cog):
     @unjail.error
     async def jail_unjail_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.CheckFailure):
-            await interaction.response.send_message(
+            message = (
                 "Tu n'as pas la permission de faire ça (il faut être administrateur, avoir la permission "
-                "de modérer les membres, ou avoir le rôle Perm Jail/Perm Unjail).",
-                ephemeral=True,
+                "de modérer les membres, ou avoir le rôle Perm Jail/Perm Unjail)."
             )
+        else:
+            original = getattr(error, "original", error)
+            if isinstance(original, discord.Forbidden):
+                message = "❌ Le bot n'a pas les permissions nécessaires pour faire ça ici."
+            else:
+                message = f"❌ Une erreur est survenue : {original}"
+            print(f"⚠️ Erreur dans /jail ou /unjail : {original}")
+
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+        except discord.HTTPException:
+            pass
 
     # ------------------------------------------------------------------ #
     #  Libération automatique
