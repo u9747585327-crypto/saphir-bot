@@ -120,7 +120,7 @@ class Hierarchy(commands.Cog):
 
     @app_commands.command(
         name="nettoyage-roles",
-        description="Transfère les membres des anciens rôles (avant le style) vers les nouveaux, puis supprime les anciens",
+        description="Migre les membres des anciens rôles vers les nouveaux (style), puis supprime les anciens",
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def nettoyage_roles(self, interaction: discord.Interaction):
