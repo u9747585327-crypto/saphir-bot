@@ -35,6 +35,7 @@ INITIAL_COGS = [
     "cogs.leveling",
     "cogs.hierarchy",
     "cogs.moderation",
+    "cogs.diagnostic",
 ]
 
 

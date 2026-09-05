@@ -17,6 +17,11 @@ if _MONGO_URI:
         _collection = None
 
 
+def is_connected() -> bool:
+    """True si le stockage utilise MongoDB, False s'il utilise les fichiers JSON locaux."""
+    return _collection is not None
+
+
 def load_json(path, default):
     """Charge la donnée enregistrée sous `path` (base Mongo si configurée, sinon fichier local)."""
     if _collection is not None:

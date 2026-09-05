@@ -182,9 +182,10 @@ class Prison(commands.Cog):
         channel = discord.utils.get(guild.text_channels, name=PRISON_TEXT_CHANNEL)
         if channel:
             try:
-                await channel.send(embed=embed)
+                return await channel.send(embed=embed)
             except discord.HTTPException:
                 pass
+        return None
 
     @app_commands.command(name="jail", description="Envoie un membre à Alcatraz pour une durée donnée, en lui retirant ses rôles")
     @app_commands.describe(
@@ -244,8 +245,6 @@ class Prison(commands.Cog):
             except discord.HTTPException:
                 pass
 
-        save_json(PRISON_DATA_FILE, data)
-
         embed = discord.Embed(
             title="⛓️ Membre envoyé à Alcatraz",
             color=discord.Color(COLORS["danger"]),
@@ -257,7 +256,12 @@ class Prison(commands.Cog):
         embed.add_field(name="Modérateur", value=interaction.user.mention, inline=False)
 
         await interaction.followup.send(embed=embed, ephemeral=True)
-        await self._announce(guild, embed)
+        announce_msg = await self._announce(guild, embed)
+        if announce_msg:
+            data[str(guild.id)][str(membre.id)]["announcement_channel_id"] = announce_msg.channel.id
+            data[str(guild.id)][str(membre.id)]["announcement_message_id"] = announce_msg.id
+
+        save_json(PRISON_DATA_FILE, data)
 
         try:
             await membre.send(
@@ -308,6 +312,40 @@ class Prison(commands.Cog):
             color=discord.Color(COLORS["saphir"]),
         )
         await self._announce(guild, embed)
+        await self._freeze_announcement(guild, entry)
+
+    async def _freeze_announcement(self, guild: discord.Guild, entry: dict):
+        """Remplace le compte à rebours du message de jail d'origine par un état figé,
+        pour qu'il n'affiche pas indéfiniment 'il y a X secondes/minutes' après coup."""
+        message_id = entry.get("announcement_message_id")
+        channel_id = entry.get("announcement_channel_id")
+        if not message_id or not channel_id:
+            return
+
+        channel = guild.get_channel(channel_id)
+        if channel is None:
+            return
+
+        try:
+            message = await channel.fetch_message(message_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return
+
+        if not message.embeds:
+            return
+
+        original = message.embeds[0]
+        new_embed = discord.Embed.from_dict(original.to_dict())
+        new_embed.color = discord.Color(COLORS["success"])
+        for i, field in enumerate(new_embed.fields):
+            if field.name == "Libération":
+                new_embed.set_field_at(i, name="Libération", value="✅ Terminée", inline=field.inline)
+                break
+
+        try:
+            await message.edit(embed=new_embed)
+        except discord.HTTPException:
+            pass
 
     @app_commands.command(name="unjail", description="Libère immédiatement un membre d'Alcatraz et lui rend ses rôles")
     @app_commands.describe(membre="Membre à libérer")
