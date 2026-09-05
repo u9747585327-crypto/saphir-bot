@@ -218,17 +218,21 @@ class Leveling(commands.Cog):
             await interaction.followup.send("❌ Permissions insuffisantes pour créer la catégorie.", ephemeral=True)
             return
 
+        # les membres peuvent lire ces salons mais pas y écrire — seul Saphir y poste
+        readonly_overwrites = {guild.default_role: discord.PermissionOverwrite(send_messages=False)}
+
         # 1. salon d'annonce des passages de niveau
         announce_channel = discord.utils.get(guild.text_channels, name=LEVEL_UP_CHANNEL_NAME)
         try:
             if announce_channel is None:
                 announce_channel = await guild.create_text_channel(
-                    LEVEL_UP_CHANNEL_NAME, category=category, reason="Configuration niveaux (Saphir)"
+                    LEVEL_UP_CHANNEL_NAME, category=category, overwrites=readonly_overwrites, reason="Configuration niveaux (Saphir)"
                 )
                 report.append(f"✅ Salon d'annonce créé : {announce_channel.mention}")
             else:
                 if announce_channel.category != category:
                     await announce_channel.edit(category=category, reason="Configuration niveaux (Saphir)")
+                await announce_channel.edit(overwrites=readonly_overwrites, reason="Configuration niveaux (Saphir)")
                 report.append(f"= Salon d'annonce déjà présent : {announce_channel.mention}")
         except discord.Forbidden:
             await interaction.followup.send("❌ Permissions insuffisantes pour créer le salon d'annonce.", ephemeral=True)
@@ -263,12 +267,13 @@ class Leveling(commands.Cog):
         try:
             if lb_channel is None:
                 lb_channel = await guild.create_text_channel(
-                    LEADERBOARD_CHANNEL_NAME, category=category, reason="Configuration niveaux (Saphir)"
+                    LEADERBOARD_CHANNEL_NAME, category=category, overwrites=readonly_overwrites, reason="Configuration niveaux (Saphir)"
                 )
                 report.append(f"✅ Salon classement créé : {lb_channel.mention}")
             else:
                 if lb_channel.category != category:
                     await lb_channel.edit(category=category, reason="Configuration niveaux (Saphir)")
+                await lb_channel.edit(overwrites=readonly_overwrites, reason="Configuration niveaux (Saphir)")
                 report.append(f"= Salon classement déjà présent : {lb_channel.mention}")
             guild_settings["leaderboard_channel_id"] = lb_channel.id
         except discord.Forbidden:

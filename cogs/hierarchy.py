@@ -13,7 +13,7 @@ from config import (
 )
 
 # migration ponctuelle : anciens noms de rôles (avant l'ajout du style 「🜲・...」)
-# vers leur équivalent stylé actuel. Sert uniquement à /nettoyage-roles.
+# vers leur équivalent stylé actuel. Sert à /nettoyage-roles et /reset-roles.
 LEGACY_ROLE_MIGRATIONS = [
     ("🌟 Fondateur", "「🜲・👑 𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」"),
     ("Co-Fondateur", "「🜲・𝗖𝗼-𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」"),
@@ -31,18 +31,36 @@ LEGACY_ROLE_MIGRATIONS = [
 ]
 
 
+class ConfirmResetView(discord.ui.View):
+    def __init__(self, author_id: int):
+        super().__init__(timeout=60)
+        self.author_id = author_id
+        self.value = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("Seul l'auteur de la commande peut confirmer.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Supprimer et recréer", style=discord.ButtonStyle.danger, emoji="⚠️")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.value = True
+        self.stop()
+        await interaction.response.defer()
+
+    @discord.ui.button(label="Annuler", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.value = False
+        self.stop()
+        await interaction.response.defer()
+
+
 class Hierarchy(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(
-        name="setup-roles",
-        description="Crée la hiérarchie de rôles (Fondateur → Membre) et les rôles Perm Jail/Perm Unjail",
-    )
-    @app_commands.checks.has_permissions(administrator=True)
-    async def setup_roles(self, interaction: discord.Interaction):
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        guild = interaction.guild
+    async def _configure_roles(self, guild: discord.Guild) -> list:
         report = []
         created_roles = {}
 
@@ -106,6 +124,17 @@ class Hierarchy(commands.Cog):
                     pass
             report.append(f"🔑 Accès staff appliqué sur {category_name}")
 
+        return report
+
+    @app_commands.command(
+        name="setup-roles",
+        description="Crée la hiérarchie de rôles (Fondateur → Membre) et les rôles Perm Jail/Perm Unjail",
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def setup_roles(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        report = await self._configure_roles(interaction.guild)
+
         embed = discord.Embed(
             title="🎖️ Configuration des rôles",
             description="\n".join(report),
@@ -115,6 +144,64 @@ class Hierarchy(commands.Cog):
 
     @setup_roles.error
     async def setup_roles_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        if isinstance(error, app_commands.MissingPermissions):
+            await interaction.response.send_message("Seul un administrateur peut utiliser cette commande.", ephemeral=True)
+
+    @app_commands.command(
+        name="reset-roles",
+        description="Supprime TOUS les rôles de hiérarchie/permission (anciens et actuels) puis les recrée",
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def reset_roles(self, interaction: discord.Interaction):
+        guild = interaction.guild
+
+        all_known_names = set()
+        for name, *_rest in HIERARCHY_ROLES:
+            all_known_names.add(name)
+        all_known_names.add(PERM_JAIL_ROLE_NAME)
+        all_known_names.add(PERM_UNJAIL_ROLE_NAME)
+        for old_name, new_name in LEGACY_ROLE_MIGRATIONS:
+            all_known_names.add(old_name)
+            all_known_names.add(new_name)
+
+        existing = [r for r in guild.roles if r.name in all_known_names]
+        total_members = sum(len(r.members) for r in existing)
+
+        view = ConfirmResetView(interaction.user.id)
+        await interaction.response.send_message(
+            f"⚠️ Ceci va **supprimer {len(existing)} rôle(s)** (hiérarchie + Perm Jail/Unjail, anciens et nouveaux noms) "
+            f"affectant **{total_members}** attribution(s) de rôle au total, puis les recréer vides. "
+            "Il faudra redistribuer les rôles aux membres après coup (ex: /donner-role-a-tous). Continuer ?",
+            view=view,
+            ephemeral=True,
+        )
+        await view.wait()
+        if not view.value:
+            await interaction.edit_original_response(content="Réinitialisation annulée.", view=None)
+            return
+
+        await interaction.edit_original_response(content="⏳ Suppression puis recréation en cours...", view=None)
+
+        deleted = 0
+        for role in existing:
+            try:
+                await role.delete(reason=f"Reset des rôles par {interaction.user}")
+                deleted += 1
+            except discord.Forbidden:
+                pass
+
+        report = [f"🗑️ {deleted}/{len(existing)} ancien(s) rôle(s) supprimé(s)"]
+        report.extend(await self._configure_roles(guild))
+
+        embed = discord.Embed(
+            title="🔄 Réinitialisation des rôles",
+            description="\n".join(report),
+            color=discord.Color(COLORS["saphir"]),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @reset_roles.error
+    async def reset_roles_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.MissingPermissions):
             await interaction.response.send_message("Seul un administrateur peut utiliser cette commande.", ephemeral=True)
 
