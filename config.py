@@ -8,8 +8,12 @@ COLORS = {
 
 SCAN_DIR = "data/scans"
 
-# nom du rôle donné automatiquement à l'arrivée d'un membre (doit déjà exister sur le serveur)
+# nom du rôle donné automatiquement à l'arrivée d'un membre, utilisé seulement si aucun rôle
+# n'a été choisi via /set-role-membre (doit déjà exister sur le serveur pour servir de secours)
 AUTO_ROLE_NAME = "Membre"
+
+# fichier où sont stockés les réglages par serveur (ex : rôle Membre choisi via /set-role-membre)
+GUILD_SETTINGS_FILE = "data/guild_settings.json"
 
 # nom du rôle donné pendant qu'un membre est connecté à un salon vocal (doit déjà exister)
 VOICE_ROLE_NAME = "En vocal"

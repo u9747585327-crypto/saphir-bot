@@ -117,12 +117,48 @@ class Prison(commands.Cog):
         except discord.Forbidden:
             report.append(f"❌ Salon vocal refusé (permissions) : {PRISON_VOICE_CHANNEL}")
 
+        # isole le rôle Exilé de tous les autres salons/catégories existants : il ne doit
+        # voir qu'Alcatraz, peu importe les permissions accordées à @everyone ailleurs
+        locked_channels = self._alcatraz_channel_ids(category)
+        locked = 0
+        for channel in guild.channels:
+            if channel.id in locked_channels:
+                continue
+            try:
+                await channel.set_permissions(exile_role, view_channel=False, reason="Isolation Alcatraz")
+                locked += 1
+            except discord.Forbidden:
+                pass
+        report.append(f"🔒 Isolation appliquée sur {locked} salon(s)/catégorie(s) existants")
+
         embed = discord.Embed(
             title="🔒 Configuration de la prison",
             description="\n".join(report),
             color=discord.Color(COLORS["danger"]),
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @staticmethod
+    def _alcatraz_channel_ids(category: discord.CategoryChannel) -> set:
+        return {category.id} | {ch.id for ch in category.channels}
+
+    @commands.Cog.listener()
+    async def on_guild_channel_create(self, channel: discord.abc.GuildChannel):
+        guild = channel.guild
+        exile_role = discord.utils.get(guild.roles, name=EXILE_ROLE_NAME)
+        if exile_role is None:
+            return
+
+        category = discord.utils.get(guild.categories, name=PRISON_CATEGORY_NAME)
+        if category is not None and channel.id in self._alcatraz_channel_ids(category):
+            return
+        if isinstance(channel, discord.CategoryChannel) and channel.name == PRISON_CATEGORY_NAME:
+            return
+
+        try:
+            await channel.set_permissions(exile_role, view_channel=False, reason="Isolation Alcatraz (nouveau salon)")
+        except discord.Forbidden:
+            pass
 
     # ------------------------------------------------------------------ #
     #  Jail / Unjail
@@ -187,6 +223,12 @@ class Prison(commands.Cog):
         except discord.Forbidden:
             await interaction.followup.send("❌ Permissions insuffisantes (rôle du bot trop bas par rapport à ce membre ?).", ephemeral=True)
             return
+
+        if membre.voice and membre.voice.channel:
+            try:
+                await membre.move_to(None, reason=f"Jail par {interaction.user} : {raison}")
+            except discord.HTTPException:
+                pass
 
         save_json(PRISON_DATA_FILE, data)
 
