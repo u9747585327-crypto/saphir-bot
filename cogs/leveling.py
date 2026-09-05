@@ -12,6 +12,7 @@ from config import (
     LEADERBOARD_REFRESH_SECONDS,
     LEVEL_ROLES,
     LEVEL_UP_CHANNEL_NAME,
+    LEVELS_CATEGORY_NAME,
     LEVELS_DATA_FILE,
 )
 from storage import load_json, save_json
@@ -196,13 +197,29 @@ class Leveling(commands.Cog):
         guild = interaction.guild
         report = []
 
+        # 0. catégorie qui regroupe les salons de niveaux
+        category = discord.utils.get(guild.categories, name=LEVELS_CATEGORY_NAME)
+        try:
+            if category is None:
+                category = await guild.create_category(LEVELS_CATEGORY_NAME, reason="Configuration niveaux (Saphir)")
+                report.append(f"✅ Catégorie créée : {LEVELS_CATEGORY_NAME}")
+            else:
+                report.append(f"= Catégorie déjà présente : {LEVELS_CATEGORY_NAME}")
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Permissions insuffisantes pour créer la catégorie.", ephemeral=True)
+            return
+
         # 1. salon d'annonce des passages de niveau
         announce_channel = discord.utils.get(guild.text_channels, name=LEVEL_UP_CHANNEL_NAME)
         try:
             if announce_channel is None:
-                announce_channel = await guild.create_text_channel(LEVEL_UP_CHANNEL_NAME, reason="Configuration niveaux (Saphir)")
+                announce_channel = await guild.create_text_channel(
+                    LEVEL_UP_CHANNEL_NAME, category=category, reason="Configuration niveaux (Saphir)"
+                )
                 report.append(f"✅ Salon d'annonce créé : {announce_channel.mention}")
             else:
+                if announce_channel.category != category:
+                    await announce_channel.edit(category=category, reason="Configuration niveaux (Saphir)")
                 report.append(f"= Salon d'annonce déjà présent : {announce_channel.mention}")
         except discord.Forbidden:
             await interaction.followup.send("❌ Permissions insuffisantes pour créer le salon d'annonce.", ephemeral=True)
@@ -236,9 +253,13 @@ class Leveling(commands.Cog):
             lb_channel = discord.utils.get(guild.text_channels, name=LEADERBOARD_CHANNEL_NAME)
         try:
             if lb_channel is None:
-                lb_channel = await guild.create_text_channel(LEADERBOARD_CHANNEL_NAME, reason="Configuration niveaux (Saphir)")
+                lb_channel = await guild.create_text_channel(
+                    LEADERBOARD_CHANNEL_NAME, category=category, reason="Configuration niveaux (Saphir)"
+                )
                 report.append(f"✅ Salon classement créé : {lb_channel.mention}")
             else:
+                if lb_channel.category != category:
+                    await lb_channel.edit(category=category, reason="Configuration niveaux (Saphir)")
                 report.append(f"= Salon classement déjà présent : {lb_channel.mention}")
             guild_settings["leaderboard_channel_id"] = lb_channel.id
         except discord.Forbidden:

@@ -49,6 +49,7 @@ LOG_CHANNELS = {
 
 # niveaux (XP texte + vocal cumulés)
 LEVELS_DATA_FILE = "data/levels.json"
+LEVELS_CATEGORY_NAME = "📊 NIVEAUX"
 LEVEL_UP_CHANNEL_NAME = "🎉・niveaux"
 LEADERBOARD_CHANNEL_NAME = "🏆・classement"
 LEADERBOARD_REFRESH_SECONDS = 300
