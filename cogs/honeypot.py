@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from cogs._shared import handle_app_error
 from config import HONEYPOT_CHANNEL_NAME, COLORS
 
 
@@ -85,8 +86,11 @@ class Honeypot(commands.Cog):
 
     @setup_honeypot.error
     async def setup_honeypot_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message("Seul un administrateur peut utiliser cette commande.", ephemeral=True)
+        await handle_app_error(
+            interaction, error,
+            perm_message="Seul un administrateur peut utiliser cette commande.",
+            command_label="setup-honeypot",
+        )
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):

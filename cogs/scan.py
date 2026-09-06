@@ -6,6 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from cogs._shared import handle_app_error
 from config import SCAN_DIR, COLORS
 from storage import load_json, save_json, list_json
 
@@ -336,8 +337,11 @@ class Scan(commands.Cog):
     @liste_scans.error
     @cloner_serveur.error
     async def scan_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message("Seul un administrateur peut utiliser cette commande.", ephemeral=True)
+        await handle_app_error(
+            interaction, error,
+            perm_message="Seul un administrateur peut utiliser cette commande.",
+            command_label="scan/clonage",
+        )
 
 
 async def setup(bot):

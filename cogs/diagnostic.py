@@ -7,6 +7,7 @@ from discord.ext import commands
 
 import cogs.funchat as funchat
 import storage
+from cogs._shared import handle_app_error
 from config import COLORS, LEVEL_ROLES, LOG_CHANNELS
 
 
@@ -112,8 +113,11 @@ class Diagnostic(commands.Cog):
 
     @diagnostic.error
     async def diagnostic_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message("Seul un administrateur peut utiliser cette commande.", ephemeral=True)
+        await handle_app_error(
+            interaction, error,
+            perm_message="Seul un administrateur peut utiliser cette commande.",
+            command_label="diagnostic",
+        )
 
 
 async def setup(bot):

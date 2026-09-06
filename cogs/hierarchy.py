@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from cogs._shared import handle_app_error
 from config import (
     COLORS,
     HIERARCHY_ROLES,
@@ -144,8 +145,11 @@ class Hierarchy(commands.Cog):
 
     @setup_roles.error
     async def setup_roles_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message("Seul un administrateur peut utiliser cette commande.", ephemeral=True)
+        await handle_app_error(
+            interaction, error,
+            perm_message="Seul un administrateur peut utiliser cette commande.",
+            command_label="setup-roles",
+        )
 
     @app_commands.command(
         name="reset-roles",
@@ -202,8 +206,11 @@ class Hierarchy(commands.Cog):
 
     @reset_roles.error
     async def reset_roles_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message("Seul un administrateur peut utiliser cette commande.", ephemeral=True)
+        await handle_app_error(
+            interaction, error,
+            perm_message="Seul un administrateur peut utiliser cette commande.",
+            command_label="reset-roles",
+        )
 
     @app_commands.command(
         name="nettoyage-roles",
@@ -252,8 +259,11 @@ class Hierarchy(commands.Cog):
 
     @nettoyage_roles.error
     async def nettoyage_roles_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message("Seul un administrateur peut utiliser cette commande.", ephemeral=True)
+        await handle_app_error(
+            interaction, error,
+            perm_message="Seul un administrateur peut utiliser cette commande.",
+            command_label="nettoyage-roles",
+        )
 
 
 async def setup(bot):

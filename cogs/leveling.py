@@ -15,6 +15,7 @@ from config import (
     LEVELS_CATEGORY_NAME,
     LEVELS_DATA_FILE,
 )
+from cogs._shared import handle_app_error
 from storage import load_json, save_json
 
 TEXT_XP_MIN, TEXT_XP_MAX = 15, 25
@@ -291,8 +292,11 @@ class Leveling(commands.Cog):
 
     @setup_niveaux.error
     async def setup_niveaux_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message("Seul un administrateur peut utiliser cette commande.", ephemeral=True)
+        await handle_app_error(
+            interaction, error,
+            perm_message="Seul un administrateur peut utiliser cette commande.",
+            command_label="setup-niveaux",
+        )
 
     # ------------------------------------------------------------------ #
     #  Gain d'XP
@@ -377,6 +381,11 @@ class Leveling(commands.Cog):
         guild_data = data.get(str(interaction.guild.id), {})
         embed = self._build_leaderboard_embed(interaction.guild, guild_data)
         await interaction.response.send_message(embed=embed)
+
+    @niveau.error
+    @classement.error
+    async def consult_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        await handle_app_error(interaction, error, command_label="niveau/classement")
 
 
 async def setup(bot):

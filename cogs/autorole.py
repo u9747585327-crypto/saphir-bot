@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from cogs._shared import handle_app_error
 from config import AUTO_ROLE_NAME, COLORS, GUILD_SETTINGS_FILE
 from storage import load_json, save_json
 
@@ -159,8 +160,11 @@ class AutoRole(commands.Cog):
     @donner_role_a_tous.error
     @retirer_role_a_tous.error
     async def autorole_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message("Seul un administrateur peut utiliser cette commande.", ephemeral=True)
+        await handle_app_error(
+            interaction, error,
+            perm_message="Seul un administrateur peut utiliser cette commande.",
+            command_label="gestion des rôles membres",
+        )
 
 
 async def setup(bot):

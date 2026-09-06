@@ -4,6 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from cogs._shared import handle_app_error
 from config import VOICE_HUB_CATEGORY_NAME, VOICE_HUB_CHANNEL_NAME, COLORS
 
 # anti-spam : délai minimal entre deux créations de salon perso par le même membre
@@ -199,8 +200,11 @@ class VoiceHub(commands.Cog):
 
     @setup_vocal.error
     async def setup_vocal_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message("Seul un administrateur peut utiliser cette commande.", ephemeral=True)
+        await handle_app_error(
+            interaction, error,
+            perm_message="Seul un administrateur peut utiliser cette commande.",
+            command_label="setup-vocal",
+        )
 
     @commands.Cog.listener()
     async def on_voice_state_update(

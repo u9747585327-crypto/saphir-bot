@@ -4,6 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from cogs._shared import handle_app_error
 from config import (
     COLORS,
     OSINT_CATEGORY_NAME,
@@ -127,8 +128,11 @@ class Osint(commands.Cog):
 
     @setup_osint.error
     async def setup_osint_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message("Seul un administrateur peut utiliser cette commande.", ephemeral=True)
+        await handle_app_error(
+            interaction, error,
+            perm_message="Seul un administrateur peut utiliser cette commande.",
+            command_label="setup-osint",
+        )
 
     # ------------------------------------------------------------------ #
     #  Recherche
@@ -229,7 +233,7 @@ class Osint(commands.Cog):
 
     @recherche_discord.error
     async def recherche_discord_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        await interaction.response.send_message(f"Une erreur est survenue : {error}", ephemeral=True)
+        await handle_app_error(interaction, error, command_label="recherche-discord")
 
 
 async def setup(bot):
