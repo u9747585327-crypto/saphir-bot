@@ -37,6 +37,7 @@ INITIAL_COGS = [
     "cogs.moderation",
     "cogs.broadcast",
     "cogs.funchat",
+    "cogs.brawlstars",
     "cogs.diagnostic",
     "cogs.osint",
     "cogs.help",

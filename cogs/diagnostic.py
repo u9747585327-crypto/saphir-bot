@@ -5,6 +5,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+import cogs.brawlstars as brawlstars
 import cogs.funchat as funchat
 import storage
 from cogs._shared import handle_app_error
@@ -55,6 +56,7 @@ class Diagnostic(commands.Cog):
 
         lines.append(f"**Stockage** : {'✅ MongoDB connecté' if storage.is_connected() else '⚠️ Fichiers locaux (perdus au redémarrage sur Render)'}")
         lines.append(f"**Chat IA** : {'✅ Groq connecté' if funchat.is_ai_enabled() else '⚠️ Réponses toutes faites (pas de GROQ_API_KEY)'}")
+        lines.append(f"**Brawl Stars** : {'✅ Clé API configurée' if brawlstars.is_configured() else '⚠️ Non configuré (pas de BRAWLSTARS_API_KEY)'}")
 
         # --- Doublons (nom strictement identique) ---
         role_counts = {}

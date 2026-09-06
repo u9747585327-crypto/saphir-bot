@@ -106,6 +106,12 @@ PERM_UNJAIL_ROLE_NAME = "「🜲・🔓 Perm Unjail」"
 DOSSIER_DATA_FILE = "data/dossiers.json"
 DOSSIER_MAX_ENTRIES = 10  # entrées conservées par membre, les plus anciennes sont supprimées
 
+# lien compte Discord <-> tag Brawl Stars (voir cogs/brawlstars.py)
+BRAWLSTARS_LINKS_FILE = "data/brawlstars_links.json"
+# proxy RoyaleAPI par défaut : contourne le verrou par IP de l'API officielle (l'IP de sortie
+# de Render change à chaque redéploiement, donc une clé verrouillée dessus casserait sans arrêt)
+BRAWLSTARS_API_BASE = "https://bsproxy.royaleapi.dev/v1"
+
 FUNCHAT_MENTION_RESPONSES = [
     "Ouais je suis là, calme-toi 😌",
     "Quoi encore ?",
