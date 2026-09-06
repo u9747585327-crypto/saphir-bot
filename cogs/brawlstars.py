@@ -1,18 +1,15 @@
-import os
-
-import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from cogs._shared import SaphirModal, handle_app_error
 from config import (
-    BRAWLSTARS_API_BASE,
     BRAWLSTARS_CATEGORY_NAME,
     BRAWLSTARS_INFO_CHANNEL_NAME,
     BRAWLSTARS_LINKS_FILE,
     COLORS,
 )
+from services import brawlstars_api as api
 from services.setup_kit import ensure_category, ensure_text_channel, post_once, readonly_overwrites
 from storage import aload_json, asave_json
 
@@ -31,20 +28,10 @@ INFO_TEXT = (
 # choix de classer sur ces deux valeurs plutôt que sur un rang Ranked inaccessible.
 LEADERBOARD_MAX_ENTRIES = 15
 
-# clé générée sur developer.brawlstars.com — IMPORTANT : elle doit être verrouillée sur l'IP
-# du proxy RoyaleAPI (45.79.218.79 au moment de l'écriture, voir docs.royaleapi.com/proxy.html),
-# pas sur l'IP de Render qui change à chaque redéploiement.
-# .strip() : un copier-coller de JWT (clé sur 3+ lignes affichées) embarque souvent un
-# retour à la ligne ou une espace en trop, ce qu'aiohttp refuse ensuite avec "Forbidden
-# control character detected in headers" — invisible tant qu'on ne l'a pas nettoyé ici.
-_API_KEY = (os.environ.get("BRAWLSTARS_API_KEY") or "").strip() or None
-_API_BASE = os.environ.get("BRAWLSTARS_API_BASE", BRAWLSTARS_API_BASE).strip()
-
-VALID_TAG_CHARS = set("0289PYLQGRJCUV")
-
-
 def is_configured() -> bool:
-    return bool(_API_KEY)
+    """Réexporté ici parce que /diagnostic interroge ce cog. La clé API elle-même vit
+    maintenant dans services/brawlstars_api.py."""
+    return api.is_configured()
 
 
 async def run_setup(bot, guild: discord.Guild) -> list:
@@ -66,60 +53,6 @@ async def run_setup(bot, guild: discord.Guild) -> list:
     return report
 
 
-def _normalize_tag(raw: str) -> str:
-    """Nettoie un tag saisi par un humain (espaces, minuscules, # optionnel) et l'encode
-    pour l'URL (l'API attend %23 à la place du #, sinon aiohttp lirait # comme un fragment)."""
-    tag = raw.strip().upper().lstrip("#").replace(" ", "")
-    return "%23" + tag
-
-
-def _tag_is_plausible(raw: str) -> bool:
-    tag = raw.strip().upper().lstrip("#").replace(" ", "")
-    return 3 <= len(tag) <= 14 and all(c in VALID_TAG_CHARS for c in tag)
-
-
-async def _bs_get(path: str):
-    """Retourne (data, erreur). `erreur` est None en cas de succès, sinon un code parmi :
-    "not_configured", "not_found", "forbidden", "rate_limited", "http_<code>", "network"."""
-    if not _API_KEY:
-        return None, "not_configured"
-    headers = {"Authorization": f"Bearer {_API_KEY}"}
-    url = f"{_API_BASE}/{path}"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status == 200:
-                    return await resp.json(), None
-                if resp.status == 404:
-                    return None, "not_found"
-                if resp.status == 403:
-                    return None, "forbidden"
-                if resp.status == 429:
-                    return None, "rate_limited"
-                return None, f"http_{resp.status}"
-    except (aiohttp.ClientError, TimeoutError) as e:
-        print(f"⚠️ Erreur réseau Brawl Stars ({path}) : {e}")
-        return None, "network"
-    except Exception as e:
-        # filet de sécurité : n'importe quelle autre erreur inattendue (JSON invalide,
-        # etc.) est logguée au lieu de remonter en silence jusqu'au Modal.on_error
-        print(f"⚠️ Erreur inattendue Brawl Stars ({path}) : {type(e).__name__}: {e}")
-        return None, "network"
-
-
-def _error_message(error: str) -> str:
-    return {
-        "not_configured": "🔌 La clé API Brawl Stars n'est pas configurée sur le bot.",
-        "not_found": "❌ Tag introuvable — vérifie l'orthographe (visible dans le jeu, sous ton pseudo).",
-        "forbidden": (
-            "❌ Clé API refusée par Supercell. Vérifie qu'elle est bien verrouillée sur l'IP du "
-            "proxy RoyaleAPI (45.79.218.79), pas sur l'IP du serveur."
-        ),
-        "rate_limited": "⏳ Trop de requêtes vers l'API Brawl Stars, réessaie dans une minute.",
-        "network": "❌ Impossible de joindre l'API Brawl Stars (réseau).",
-    }.get(error, f"❌ Erreur API Brawl Stars ({error}).")
-
-
 async def _get_link(guild_id: int, user_id: int) -> str | None:
     data = await aload_json(BRAWLSTARS_LINKS_FILE, {})
     return data.get(str(guild_id), {}).get(str(user_id))
@@ -136,17 +69,6 @@ async def _get_all_links(guild_id: int) -> dict:
     return data.get(str(guild_id), {})
 
 
-def _icon_url(icon_id) -> str | None:
-    """Icône de profil via le CDN public Brawlify (cdn.brawlify.com) — gratuit, sans clé,
-    et l'icône réelle du joueur/club plutôt que son avatar Discord (icon.id vient de l'API
-    Supercell, l'image elle-même n'est fournie par aucun endpoint officiel)."""
-    return f"https://cdn.brawlify.com/profile-icons/regular/{icon_id}.png" if icon_id else None
-
-
-def _badge_url(badge_id) -> str | None:
-    return f"https://cdn.brawlify.com/club-badges/regular/{badge_id}.png" if badge_id else None
-
-
 def _build_player_embed(data: dict, tag: str) -> discord.Embed:
     club = data.get("club")
     embed = discord.Embed(title=f"🎮 {data['name']}", description=tag, color=discord.Color(COLORS["gold"]))
@@ -157,9 +79,9 @@ def _build_player_embed(data: dict, tag: str) -> discord.Embed:
     embed.add_field(name="🥊 Victoires Duo", value=str(data.get("duoVictories", 0)))
     embed.add_field(name="👤 Victoires Solo", value=str(data.get("soloVictories", 0)))
     embed.add_field(name="🏟️ Club", value=club["name"] if club else "Aucun", inline=False)
-    icon_url = _icon_url(data.get("icon", {}).get("id"))
-    if icon_url:
-        embed.set_thumbnail(url=icon_url)
+    icon = api.icon_url(data.get("icon", {}).get("id"))
+    if icon:
+        embed.set_thumbnail(url=icon)
     return embed
 
 
@@ -201,27 +123,26 @@ class LinkTagModal(SaphirModal, title="🔗 Lier un compte Brawl Stars"):
 
     async def on_submit(self, interaction: discord.Interaction):
         raw = str(self.tag.value)
-        if not _tag_is_plausible(raw):
+        if not api.tag_is_plausible(raw):
             await interaction.response.send_message(
                 "❌ Ce tag ne ressemble pas à un tag Brawl Stars valide (ex : ABC123).", ephemeral=True
             )
             return
 
         await interaction.response.defer(thinking=True, ephemeral=True)
-        normalized = _normalize_tag(raw)
-        data, error = await _bs_get(f"players/{normalized}")
+        data, error = await api.get_player(raw)
         if error:
-            await interaction.followup.send(_error_message(error), ephemeral=True)
+            await interaction.followup.send(api.error_message(error), ephemeral=True)
             return
 
-        display_tag = normalized.replace("%23", "#")
+        display_tag = api.display_tag(raw)
         club = data.get("club")
         embed = discord.Embed(title=f"🎮 {data['name']}", description=display_tag, color=discord.Color(COLORS["gold"]))
         embed.add_field(name="🏆 Trophées", value=str(data["trophies"]))
         embed.add_field(name="🏟️ Club", value=club["name"] if club else "Aucun")
-        icon_url = _icon_url(data.get("icon", {}).get("id"))
-        if icon_url:
-            embed.set_thumbnail(url=icon_url)
+        icon = api.icon_url(data.get("icon", {}).get("id"))
+        if icon:
+            embed.set_thumbnail(url=icon)
 
         view = ConfirmLinkView(interaction.user.id, interaction.guild.id, display_tag)
         await interaction.followup.send(
@@ -235,20 +156,19 @@ class PlayerTagModal(SaphirModal, title="🎮 Rechercher un joueur Brawl Stars")
 
     async def on_submit(self, interaction: discord.Interaction):
         raw = str(self.tag.value)
-        if not _tag_is_plausible(raw):
+        if not api.tag_is_plausible(raw):
             await interaction.response.send_message(
                 "❌ Ce tag ne ressemble pas à un tag Brawl Stars valide (ex : ABC123).", ephemeral=True
             )
             return
 
         await interaction.response.defer(thinking=True)
-        normalized = _normalize_tag(raw)
-        data, error = await _bs_get(f"players/{normalized}")
+        data, error = await api.get_player(raw)
         if error:
-            await interaction.followup.send(_error_message(error))
+            await interaction.followup.send(api.error_message(error))
             return
 
-        display_tag = normalized.replace("%23", "#")
+        display_tag = api.display_tag(raw)
         await interaction.followup.send(embed=_build_player_embed(data, display_tag))
 
 
@@ -258,16 +178,16 @@ class ClubTagModal(SaphirModal, title="🏟️ Rechercher un club Brawl Stars"):
 
     async def on_submit(self, interaction: discord.Interaction):
         raw = str(self.tag.value)
-        if not _tag_is_plausible(raw):
+        if not api.tag_is_plausible(raw):
             await interaction.response.send_message(
                 "❌ Ce tag ne ressemble pas à un tag Brawl Stars valide (ex : ABC123).", ephemeral=True
             )
             return
 
         await interaction.response.defer(thinking=True)
-        data, error = await _bs_get(f"clubs/{_normalize_tag(raw)}")
+        data, error = await api.get_club(raw)
         if error:
-            await interaction.followup.send(_error_message(error))
+            await interaction.followup.send(api.error_message(error))
             return
 
         members = data.get("members", [])
@@ -283,9 +203,9 @@ class ClubTagModal(SaphirModal, title="🏟️ Rechercher un club Brawl Stars"):
         embed.add_field(name="🔓 Type", value=data["type"].capitalize())
         if top_members:
             embed.add_field(name="Top membres", value=top_members, inline=False)
-        badge_url = _badge_url(data.get("badgeId"))
-        if badge_url:
-            embed.set_thumbnail(url=badge_url)
+        badge = api.badge_url(data.get("badgeId"))
+        if badge:
+            embed.set_thumbnail(url=badge)
         await interaction.followup.send(embed=embed)
 
 
@@ -320,9 +240,9 @@ class BrawlStars(commands.Cog):
             return
 
         await interaction.response.defer(thinking=True)
-        data, error = await _bs_get(f"players/{_normalize_tag(tag)}")
+        data, error = await api.get_player(tag)
         if error:
-            await interaction.followup.send(_error_message(error))
+            await interaction.followup.send(api.error_message(error))
             return
 
         embed = _build_player_embed(data, tag)
@@ -345,15 +265,17 @@ class BrawlStars(commands.Cog):
             await interaction.followup.send("Personne n'a encore relié de compte Brawl Stars — utilise `/lier-brawlstars`.")
             return
 
-        ranked = []
-        for user_id_str, tag in links.items():
-            data, error = await _bs_get(f"players/{_normalize_tag(tag)}")
-            if error:
-                continue
-            ranked.append((int(user_id_str), tag, data))
+        # appels groupés en parallèle : en série, le classement enchaînait autant
+        # d'allers-retours réseau que de comptes liés
+        players = await api.get_players_bulk(list(links.values()))
+        ranked = [
+            (int(user_id_str), tag, players[tag])
+            for user_id_str, tag in links.items()
+            if tag in players
+        ]
 
         if not ranked:
-            await interaction.followup.send(_error_message("network"))
+            await interaction.followup.send(api.error_message("network"))
             return
 
         ranked.sort(key=lambda r: r[2]["trophies"], reverse=True)
