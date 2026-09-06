@@ -16,7 +16,6 @@ SECTIONS = [
     ("cogs.logs", "📋 Logs"),
     ("cogs.leveling", "📊 Niveaux"),
     ("cogs.brawlstars", "🎮 Brawl Stars"),
-    ("cogs.osint", "🔍 Recherche Discord"),
     ("cogs.moderation", "🔨 Modération"),
     ("cogs.broadcast", "📨 Messages privés"),
     ("cogs.funchat", "🤖 Chat IA"),

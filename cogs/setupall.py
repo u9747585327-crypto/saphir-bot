@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from cogs import brawlstars, funchat, honeypot, logs, voicehub
+from cogs import brawlstars, honeypot, logs, voicehub
 from cogs._shared import handle_app_error
 from config import COLORS
 
@@ -17,20 +17,18 @@ async def _cog_setup(bot, cog_name: str, guild, method: str = "run_setup"):
 
 
 # Ordre imposé par les dépendances réelles entre features :
-#  - /setup-osint a besoin du rôle OSINT, créé par /setup-niveaux
 #  - /setup-administration a besoin des rôles créés par /setup-roles
 #  - l'étape « accès staff » de /setup-roles ne fait rien tant que les catégories
 #    Alcatraz et Logs n'existent pas → d'où le second passage de setup-roles à la fin
+# Le chat IA n'apparaît pas ici : il n'a plus de salon dédié (il répond au ping partout).
 STEPS = [
     ("setup-roles", lambda bot, g: _cog_setup(bot, "Hierarchy", g)),
     ("setup-logs", lambda bot, g: logs.run_setup(bot, g)),
     ("setup-prison", lambda bot, g: _cog_setup(bot, "Prison", g)),
     ("setup-niveaux", lambda bot, g: _cog_setup(bot, "Leveling", g)),
-    ("setup-osint", lambda bot, g: _cog_setup(bot, "Osint", g)),
     ("setup-vocal", lambda bot, g: voicehub.run_setup(bot, g)),
     ("setup-honeypot", lambda bot, g: honeypot.run_setup(bot, g)),
     ("setup-brawlstars", lambda bot, g: brawlstars.run_setup(bot, g)),
-    ("setup-chat-ia", lambda bot, g: funchat.run_setup(bot, g)),
     ("setup-administration", lambda bot, g: _cog_setup(bot, "Hierarchy", g, "run_setup_administration")),
     ("setup-roles (2e passage)", lambda bot, g: _cog_setup(bot, "Hierarchy", g)),
 ]

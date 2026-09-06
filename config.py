@@ -69,15 +69,6 @@ LEVEL_ROLES = [
     (50, "「🜲・👑 𝗟𝗲𝗴𝗲𝗻𝗱𝗲」", 0xF1C40F),
 ]
 
-# rôle qui débloque l'accès au salon de recherche de profil Discord (voir cogs/osint.py)
-# doit correspondre exactement à un des noms de LEVEL_ROLES ci-dessus
-OSINT_ROLE_NAME = "「🜲・🔍 𝗢𝗦𝗜𝗡𝗧」"
-OSINT_CATEGORY_NAME = "🔍 RECHERCHE"
-OSINT_INFO_CHANNEL_NAME = "🔍・explications"
-OSINT_COMMAND_CHANNEL_NAME = "🔍・recherche"
-OSINT_DAILY_LIMIT = 5
-OSINT_USAGE_FILE = "data/osint_usage.json"
-
 # hiérarchie de rôles visibles (hoist), permissions Discord natives cumulées,
 # du plus haut rang au plus bas — noms en police grasse sans-serif (rendue nativement
 # par Discord, aucune police externe requise)
@@ -115,9 +106,6 @@ PERM_UNJAIL_ROLE_NAME = "「🜲・🔓 Perm Unjail」"
 # des piques qui rappellent un running gag précédent (continuité au lieu de vannes jetables)
 DOSSIER_DATA_FILE = "data/dossiers.json"
 DOSSIER_MAX_ENTRIES = 10  # entrées conservées par membre, les plus anciennes sont supprimées
-
-FUNCHAT_CATEGORY_NAME = "🤖 CHAT IA"
-FUNCHAT_INFO_CHANNEL_NAME = "🤖・infos-chat-ia"
 
 # lien compte Discord <-> tag Brawl Stars (voir cogs/brawlstars.py)
 BRAWLSTARS_LINKS_FILE = "data/brawlstars_links.json"

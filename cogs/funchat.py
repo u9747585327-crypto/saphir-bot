@@ -10,12 +10,9 @@ from config import (
     COLORS,
     DOSSIER_DATA_FILE,
     DOSSIER_MAX_ENTRIES,
-    FUNCHAT_CATEGORY_NAME,
-    FUNCHAT_INFO_CHANNEL_NAME,
     FUNCHAT_MENTION_RESPONSES,
     HONEYPOT_CHANNEL_NAME,
 )
-from services.setup_kit import ensure_category, ensure_text_channel, post_once, readonly_overwrites
 from storage import aload_json, asave_json
 
 # --- IA Groq (gratuite, palier très généreux : 14 400 requêtes/jour) avec repli
@@ -70,30 +67,8 @@ def is_ai_enabled() -> bool:
     return _groq_client is not None
 
 
-async def run_setup(bot, guild: discord.Guild) -> list:
-    """Logique de /setup-chat-ia, appelable aussi par /setup-tout."""
-    report = []
-    category, line = await ensure_category(guild, FUNCHAT_CATEGORY_NAME)
-    report.append(line)
-    if category is None:
-        return report
-
-    channel, line = await ensure_text_channel(
-        guild, FUNCHAT_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites(guild)
-    )
-    report.append(line)
-
-    info_text = (
-        "🤖 **Chat IA**\n\n"
-        f"Ping {bot.user.mention} dans n'importe quel salon pour qu'il te réponde — il garde le "
-        "contexte des derniers messages du salon, donc il peut enchaîner sur ce qui vient d'être dit.\n\n"
-        "Il tient aussi un « casier » par membre à partir de ses vannes précédentes, "
-        "consultable via `/casier [membre]`."
-    )
-    info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["saphir"]))
-    if await post_once(channel, bot.user.id, info_embed, "Saphir · Chat IA info"):
-        report.append("📝 Message d'explication posté")
-    return report
+# Pas de commande /setup-* ici : le chat IA n'a aucun salon dédié. Il répond quand on
+# ping le bot, dans n'importe quel salon, et /casier se consulte de partout.
 
 
 async def _get_dossier(guild_id: int, user_id: int) -> list:
@@ -193,14 +168,6 @@ class FunChat(commands.Cog):
         if self.bot.user in message.mentions:
             await self._reply(message, FUNCHAT_MENTION_RESPONSES)
 
-    @app_commands.command(name="setup-chat-ia", description="Crée le salon d'information sur le chat IA de Saphir")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def setup_chat_ia(self, interaction: discord.Interaction):
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        report = await run_setup(self.bot, interaction.guild)
-        embed = discord.Embed(title="🤖 Configuration chat IA", description="\n".join(report), color=discord.Color(COLORS["saphir"]))
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
     @app_commands.command(name="casier", description="Affiche le casier (running gag tenu par l'IA) d'un membre")
     @app_commands.describe(membre="Membre dont voir le casier (toi par défaut)")
     async def casier(self, interaction: discord.Interaction, membre: discord.Member = None):
@@ -216,14 +183,9 @@ class FunChat(commands.Cog):
         embed.set_footer(text="Alimenté automatiquement par le chat IA de Saphir")
         await interaction.response.send_message(embed=embed)
 
-    @setup_chat_ia.error
     @casier.error
     async def funchat_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        await handle_app_error(
-            interaction, error,
-            perm_message="Seul un administrateur peut utiliser cette commande.",
-            command_label="chat IA",
-        )
+        await handle_app_error(interaction, error, command_label="casier")
 
 
 async def setup(bot):
