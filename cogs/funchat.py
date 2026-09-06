@@ -18,7 +18,7 @@ from config import (
     FUNCHAT_RESPONSES,
     HONEYPOT_CHANNEL_NAME,
 )
-from storage import load_json, save_json
+from storage import aload_json, asave_json
 
 # --- IA Groq (gratuite, palier très généreux : 14 400 requêtes/jour) avec repli
 # automatique sur les réponses toutes faites si la clé manque ou l'appel échoue ---
@@ -66,17 +66,17 @@ def is_ai_enabled() -> bool:
     return _groq_client is not None
 
 
-def _get_dossier(guild_id: int, user_id: int) -> list:
-    data = load_json(DOSSIER_DATA_FILE, {})
+async def _get_dossier(guild_id: int, user_id: int) -> list:
+    data = await aload_json(DOSSIER_DATA_FILE, {})
     return data.get(str(guild_id), {}).get(str(user_id), [])
 
 
-def _add_dossier_entry(guild_id: int, user_id: int, entry: str):
-    data = load_json(DOSSIER_DATA_FILE, {})
+async def _add_dossier_entry(guild_id: int, user_id: int, entry: str):
+    data = await aload_json(DOSSIER_DATA_FILE, {})
     entries = data.setdefault(str(guild_id), {}).setdefault(str(user_id), [])
     entries.append(entry)
     del entries[:-DOSSIER_MAX_ENTRIES]
-    save_json(DOSSIER_DATA_FILE, data)
+    await asave_json(DOSSIER_DATA_FILE, data)
 
 
 async def _generate_ai_reply(history: list, user_content: str, dossier: list = None):
@@ -127,14 +127,14 @@ class FunChat(commands.Cog):
         channel_id = message.channel.id
         history = self.history.setdefault(channel_id, [])
         user_content = message.content.strip()
-        dossier = _get_dossier(message.guild.id, message.author.id)
+        dossier = await _get_dossier(message.guild.id, message.author.id)
 
         reply = await _generate_ai_reply(history, user_content, dossier=dossier)
         if reply:
             history.append({"role": "user", "content": user_content[:500]})
             history.append({"role": "assistant", "content": reply})
             del history[:-GROQ_MAX_HISTORY]
-            _add_dossier_entry(message.guild.id, message.author.id, reply)
+            await _add_dossier_entry(message.guild.id, message.author.id, reply)
         else:
             reply = random.choice(fallback_pool)
 
@@ -177,7 +177,7 @@ class FunChat(commands.Cog):
     @app_commands.describe(membre="Membre dont voir le casier (toi par défaut)")
     async def casier(self, interaction: discord.Interaction, membre: discord.Member = None):
         target = membre or interaction.user
-        entries = _get_dossier(interaction.guild.id, target.id)
+        entries = await _get_dossier(interaction.guild.id, target.id)
 
         embed = discord.Embed(title=f"📁 Casier de {target.display_name}", color=discord.Color(COLORS["saphir"]))
         if entries:

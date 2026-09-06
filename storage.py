@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 
@@ -43,6 +44,18 @@ def save_json(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+async def aload_json(path, default):
+    """Version non bloquante de load_json : l'appel réseau/disque part dans un thread
+    pour ne pas geler la boucle d'événements du bot (à utiliser dans les chemins chauds :
+    à chaque message, boucles périodiques...)."""
+    return await asyncio.to_thread(load_json, path, default)
+
+
+async def asave_json(path, data):
+    """Version non bloquante de save_json (voir aload_json)."""
+    await asyncio.to_thread(save_json, path, data)
 
 
 def list_json(directory):

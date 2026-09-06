@@ -15,7 +15,7 @@ from config import (
     PRISON_TEXT_CHANNEL,
     PRISON_VOICE_CHANNEL,
 )
-from storage import load_json, save_json
+from storage import aload_json, asave_json
 
 DURATION_RE = re.compile(r"^(\d+)\s*([smhdw])$", re.IGNORECASE)
 UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
@@ -229,7 +229,7 @@ class Prison(commands.Cog):
         removable_roles = [r for r in membre.roles if not r.is_default() and not r.managed]
         unjail_at = datetime.datetime.now(datetime.timezone.utc) + delta
 
-        data = load_json(PRISON_DATA_FILE, {})
+        data = await aload_json(PRISON_DATA_FILE, {})
         data.setdefault(str(guild.id), {})[str(membre.id)] = {
             "role_ids": [r.id for r in removable_roles],
             "unjail_at": unjail_at.isoformat(),
@@ -267,7 +267,7 @@ class Prison(commands.Cog):
             data[str(guild.id)][str(membre.id)]["announcement_channel_id"] = announce_msg.channel.id
             data[str(guild.id)][str(membre.id)]["announcement_message_id"] = announce_msg.id
 
-        save_json(PRISON_DATA_FILE, data)
+        await asave_json(PRISON_DATA_FILE, data)
 
         try:
             await membre.send(
@@ -360,7 +360,7 @@ class Prison(commands.Cog):
         guild = interaction.guild
         await interaction.response.defer(thinking=True, ephemeral=True)
 
-        data = load_json(PRISON_DATA_FILE, {})
+        data = await aload_json(PRISON_DATA_FILE, {})
         guild_data = data.get(str(guild.id), {})
         entry = guild_data.pop(str(membre.id), None)
 
@@ -369,7 +369,7 @@ class Prison(commands.Cog):
             return
 
         await self._release(guild, str(membre.id), entry, reason=f"Libéré manuellement par {interaction.user}")
-        save_json(PRISON_DATA_FILE, data)
+        await asave_json(PRISON_DATA_FILE, data)
 
         await interaction.followup.send(f"🔓 {membre.mention} a été libéré d'Alcatraz.", ephemeral=True)
 
@@ -408,7 +408,7 @@ class Prison(commands.Cog):
 
     @tasks.loop(seconds=30)
     async def check_releases(self):
-        data = load_json(PRISON_DATA_FILE, {})
+        data = await aload_json(PRISON_DATA_FILE, {})
         now = datetime.datetime.now(datetime.timezone.utc)
         changed = False
 
@@ -429,7 +429,7 @@ class Prison(commands.Cog):
                 del data[guild_id]
 
         if changed:
-            save_json(PRISON_DATA_FILE, data)
+            await asave_json(PRISON_DATA_FILE, data)
 
     @check_releases.before_loop
     async def before_check_releases(self):

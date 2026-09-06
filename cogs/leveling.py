@@ -16,7 +16,7 @@ from config import (
     LEVELS_DATA_FILE,
 )
 from cogs._shared import handle_app_error
-from storage import load_json, save_json
+from storage import aload_json, asave_json
 
 TEXT_XP_MIN, TEXT_XP_MAX = 15, 25
 TEXT_XP_COOLDOWN = 60  # secondes entre deux gains d'XP texte pour un même membre
@@ -90,7 +90,7 @@ class Leveling(commands.Cog):
     # ------------------------------------------------------------------ #
 
     async def _sync_level_roles(self, member: discord.Member, new_level: int, settings: dict = None):
-        settings = settings if settings is not None else load_json(GUILD_SETTINGS_FILE, {})
+        settings = settings if settings is not None else await aload_json(GUILD_SETTINGS_FILE, {})
         guild_settings = settings.get(str(member.guild.id), {})
         level_role_ids = guild_settings.get("level_role_ids", {})
         if not level_role_ids:
@@ -154,7 +154,7 @@ class Leveling(commands.Cog):
         if channel is None:
             return
 
-        data = load_json(LEVELS_DATA_FILE, {})
+        data = await aload_json(LEVELS_DATA_FILE, {})
         guild_data = data.get(str(guild.id), {})
         embed = self._build_leaderboard_embed(guild, guild_data)
 
@@ -180,11 +180,11 @@ class Leveling(commands.Cog):
 
         guild_settings["leaderboard_message_id"] = new_message.id
         settings[str(guild.id)] = guild_settings
-        save_json(GUILD_SETTINGS_FILE, settings)
+        await asave_json(GUILD_SETTINGS_FILE, settings)
 
     @tasks.loop(seconds=LEADERBOARD_REFRESH_SECONDS)
     async def leaderboard_refresh(self):
-        settings = load_json(GUILD_SETTINGS_FILE, {})
+        settings = await aload_json(GUILD_SETTINGS_FILE, {})
         for guild in self.bot.guilds:
             if settings.get(str(guild.id), {}).get("leaderboard_channel_id"):
                 await self._refresh_leaderboard_for_guild(guild, settings)
@@ -240,7 +240,7 @@ class Leveling(commands.Cog):
             return
 
         # 2. rôles automatiques par niveau
-        settings = load_json(GUILD_SETTINGS_FILE, {})
+        settings = await aload_json(GUILD_SETTINGS_FILE, {})
         guild_settings = settings.setdefault(str(guild.id), {})
         level_role_ids = guild_settings.setdefault("level_role_ids", {})
 
@@ -280,7 +280,7 @@ class Leveling(commands.Cog):
         except discord.Forbidden:
             report.append(f"❌ Salon classement refusé (permissions) : {LEADERBOARD_CHANNEL_NAME}")
 
-        save_json(GUILD_SETTINGS_FILE, settings)
+        await asave_json(GUILD_SETTINGS_FILE, settings)
         await self._refresh_leaderboard_for_guild(guild, settings)
 
         embed = discord.Embed(
@@ -313,9 +313,9 @@ class Leveling(commands.Cog):
             return
         self.text_cooldowns[key] = now
 
-        data = load_json(LEVELS_DATA_FILE, {})
+        data = await aload_json(LEVELS_DATA_FILE, {})
         leveled_to = self._apply_xp(data, message.author, random.randint(TEXT_XP_MIN, TEXT_XP_MAX))
-        save_json(LEVELS_DATA_FILE, data)
+        await asave_json(LEVELS_DATA_FILE, data)
 
         if leveled_to:
             await self._announce_level_up(message.author, leveled_to, message.channel)
@@ -323,7 +323,7 @@ class Leveling(commands.Cog):
 
     @tasks.loop(seconds=VOICE_TICK_SECONDS)
     async def voice_tick(self):
-        data = load_json(LEVELS_DATA_FILE, {})
+        data = await aload_json(LEVELS_DATA_FILE, {})
         level_ups = []
         changed = False
 
@@ -344,10 +344,10 @@ class Leveling(commands.Cog):
                         level_ups.append((member, leveled_to))
 
         if changed:
-            save_json(LEVELS_DATA_FILE, data)
+            await asave_json(LEVELS_DATA_FILE, data)
 
         if level_ups:
-            settings = load_json(GUILD_SETTINGS_FILE, {})
+            settings = await aload_json(GUILD_SETTINGS_FILE, {})
             for member, level in level_ups:
                 await self._announce_level_up(member, level, None)
                 await self._sync_level_roles(member, level, settings)
@@ -364,7 +364,7 @@ class Leveling(commands.Cog):
     @app_commands.describe(membre="Membre à consulter (toi par défaut)")
     async def niveau(self, interaction: discord.Interaction, membre: discord.Member = None):
         membre = membre or interaction.user
-        data = load_json(LEVELS_DATA_FILE, {})
+        data = await aload_json(LEVELS_DATA_FILE, {})
         entry = self._get_user(data, interaction.guild.id, membre.id)
         needed = xp_needed(entry["level"])
 
@@ -377,7 +377,7 @@ class Leveling(commands.Cog):
 
     @app_commands.command(name="classement", description="Classement des membres par XP sur ce serveur")
     async def classement(self, interaction: discord.Interaction):
-        data = load_json(LEVELS_DATA_FILE, {})
+        data = await aload_json(LEVELS_DATA_FILE, {})
         guild_data = data.get(str(interaction.guild.id), {})
         embed = self._build_leaderboard_embed(interaction.guild, guild_data)
         await interaction.response.send_message(embed=embed)
