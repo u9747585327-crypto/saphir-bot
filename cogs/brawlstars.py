@@ -19,9 +19,16 @@ INFO_TEXT = (
     "🎮 **Commandes Brawl Stars**\n\n"
     "- `/lier-brawlstars` — relie ton compte Discord à ton tag de joueur.\n"
     "- `/brawlstats [membre]` — affiche les stats du compte relié (toi par défaut).\n"
-    "- `/brawlclub` — affiche les infos d'un club via son tag.\n\n"
+    "- `/brawlplayer` — affiche le profil de n'importe quel joueur via son tag.\n"
+    "- `/brawlclub` — affiche les infos d'un club via son tag.\n"
+    "- `/brawlclassement` — classement des membres liés par trophées.\n\n"
     "Ces commandes fonctionnent dans n'importe quel salon du serveur."
 )
+
+# leaderboard : le mode compétitif « Ranked » de Brawl Stars n'est pas exposé par l'API
+# officielle (ni par aucun proxy tiers) — seuls trophées/record actuels le sont, d'où le
+# choix de classer sur ces deux valeurs plutôt que sur un rang Ranked inaccessible.
+LEADERBOARD_MAX_ENTRIES = 15
 
 # clé générée sur developer.brawlstars.com — IMPORTANT : elle doit être verrouillée sur l'IP
 # du proxy RoyaleAPI (45.79.218.79 au moment de l'écriture, voir docs.royaleapi.com/proxy.html),
@@ -95,6 +102,24 @@ async def _set_link(guild_id: int, user_id: int, tag: str):
     await asave_json(BRAWLSTARS_LINKS_FILE, data)
 
 
+async def _get_all_links(guild_id: int) -> dict:
+    data = await aload_json(BRAWLSTARS_LINKS_FILE, {})
+    return data.get(str(guild_id), {})
+
+
+def _build_player_embed(data: dict, tag: str) -> discord.Embed:
+    club = data.get("club")
+    embed = discord.Embed(title=f"🎮 {data['name']}", description=tag, color=discord.Color(COLORS["gold"]))
+    embed.add_field(name="🏆 Trophées", value=f"{data['trophies']} (record : {data['highestTrophies']})")
+    embed.add_field(name="⭐ Niveau d'XP", value=str(data["expLevel"]))
+    embed.add_field(name="🎯 Brawlers débloqués", value=str(len(data.get("brawlers", []))))
+    embed.add_field(name="🏅 Victoires 3c3", value=str(data.get("3vs3Victories", 0)))
+    embed.add_field(name="🥊 Victoires Duo", value=str(data.get("duoVictories", 0)))
+    embed.add_field(name="👤 Victoires Solo", value=str(data.get("soloVictories", 0)))
+    embed.add_field(name="🏟️ Club", value=club["name"] if club else "Aucun", inline=False)
+    return embed
+
+
 class ConfirmLinkView(discord.ui.View):
     """Affiche le profil trouvé et n'enregistre le lien que si l'auteur confirme —
     évite de lier le mauvais tag suite à une faute de frappe."""
@@ -156,6 +181,29 @@ class LinkTagModal(SaphirModal, title="🔗 Lier un compte Brawl Stars"):
         await interaction.followup.send(
             content="Voici le profil trouvé — c'est bien toi ?", embed=embed, view=view, ephemeral=True
         )
+
+
+class PlayerTagModal(SaphirModal, title="🎮 Rechercher un joueur Brawl Stars"):
+    error_label = "brawlplayer"
+    tag = discord.ui.TextInput(label="Tag du joueur", placeholder="ABC123 (le # est facultatif)", min_length=3, max_length=14)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = str(self.tag.value)
+        if not _tag_is_plausible(raw):
+            await interaction.response.send_message(
+                "❌ Ce tag ne ressemble pas à un tag Brawl Stars valide (ex : ABC123).", ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(thinking=True)
+        normalized = _normalize_tag(raw)
+        data, error = await _bs_get(f"players/{normalized}")
+        if error:
+            await interaction.followup.send(_error_message(error))
+            return
+
+        display_tag = normalized.replace("%23", "#")
+        await interaction.followup.send(embed=_build_player_embed(data, display_tag))
 
 
 class ClubTagModal(SaphirModal, title="🏟️ Rechercher un club Brawl Stars"):
@@ -266,26 +314,61 @@ class BrawlStars(commands.Cog):
             await interaction.followup.send(_error_message(error))
             return
 
-        club = data.get("club")
-        embed = discord.Embed(title=f"🎮 {data['name']}", description=tag, color=discord.Color(COLORS["gold"]))
-        embed.add_field(name="🏆 Trophées", value=f"{data['trophies']} (record : {data['highestTrophies']})")
-        embed.add_field(name="⭐ Niveau d'XP", value=str(data["expLevel"]))
-        embed.add_field(name="🎯 Brawlers débloqués", value=str(len(data.get("brawlers", []))))
-        embed.add_field(name="🏅 Victoires 3c3", value=str(data.get("3vs3Victories", 0)))
-        embed.add_field(name="🥊 Victoires Duo", value=str(data.get("duoVictories", 0)))
-        embed.add_field(name="👤 Victoires Solo", value=str(data.get("soloVictories", 0)))
-        embed.add_field(name="🏟️ Club", value=club["name"] if club else "Aucun", inline=False)
+        embed = _build_player_embed(data, tag)
         embed.set_image(url=target.display_avatar.with_size(512).url)
         await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="brawlplayer", description="Affiche le profil d'un joueur Brawl Stars via son tag")
+    async def brawlplayer(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(PlayerTagModal())
 
     @app_commands.command(name="brawlclub", description="Affiche les infos d'un club Brawl Stars via son tag")
     async def brawlclub(self, interaction: discord.Interaction):
         await interaction.response.send_modal(ClubTagModal())
 
+    @app_commands.command(name="brawlclassement", description="Classement des membres liés par trophées Brawl Stars")
+    async def brawlclassement(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True)
+        links = await _get_all_links(interaction.guild.id)
+        if not links:
+            await interaction.followup.send("Personne n'a encore relié de compte Brawl Stars — utilise `/lier-brawlstars`.")
+            return
+
+        ranked = []
+        for user_id_str, tag in links.items():
+            data, error = await _bs_get(f"players/{_normalize_tag(tag)}")
+            if error:
+                continue
+            ranked.append((int(user_id_str), tag, data))
+
+        if not ranked:
+            await interaction.followup.send(_error_message("network"))
+            return
+
+        ranked.sort(key=lambda r: r[2]["trophies"], reverse=True)
+
+        medals = ["🥇", "🥈", "🥉"]
+        lines = []
+        for i, (user_id, tag, data) in enumerate(ranked[:LEADERBOARD_MAX_ENTRIES]):
+            member = interaction.guild.get_member(user_id)
+            name = member.mention if member else data["name"]
+            rank_icon = medals[i] if i < 3 else f"`#{i + 1}`"
+            lines.append(f"{rank_icon} **{name}** — 🏆 {data['trophies']} (record : {data['highestTrophies']})")
+
+        embed = discord.Embed(
+            title="🏆 Classement Brawl Stars — trophées",
+            description="\n".join(lines),
+            color=discord.Color(COLORS["gold"]),
+        )
+        embed.set_footer(text=f"{len(ranked)}/{len(links)} compte(s) lié(s) classé(s) · trié par trophées actuels")
+        await interaction.followup.send(embed=embed)
+
     @setup_brawlstars.error
     @lier_brawlstars.error
     @brawlstats.error
+    @brawlplayer.error
     @brawlclub.error
+    @brawlclassement.error
     async def brawlstars_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         await handle_app_error(interaction, error, command_label="Brawl Stars")
 
