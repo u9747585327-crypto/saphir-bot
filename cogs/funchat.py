@@ -1,6 +1,5 @@
 import os
 import random
-import time
 
 import discord
 from discord import app_commands
@@ -10,12 +9,7 @@ from config import (
     COLORS,
     DOSSIER_DATA_FILE,
     DOSSIER_MAX_ENTRIES,
-    FUNCHAT_8BALL_RESPONSES,
-    FUNCHAT_CHANCE,
-    FUNCHAT_COOLDOWN_SECONDS,
     FUNCHAT_MENTION_RESPONSES,
-    FUNCHAT_QUESTION_CHANCE,
-    FUNCHAT_RESPONSES,
     HONEYPOT_CHANNEL_NAME,
 )
 from storage import aload_json, asave_json
@@ -126,7 +120,6 @@ async def _generate_ai_reply(channel_log: list, dossier: list = None):
 class FunChat(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.last_reply = {}
         self.channel_log = {}
 
     def _log_message(self, channel_id: int, role: str, content: str):
@@ -166,23 +159,9 @@ class FunChat(commands.Cog):
         # pour que l'IA ait du vrai contexte de conversation, pas juste ses propres échanges
         self._log_message(message.channel.id, "user", f"{message.author.display_name} : {content[:300]}")
 
-        # mentionner le bot déclenche toujours une réponse, sans cooldown
+        # ne répond plus qu'aux mentions directes du bot — plus de déclenchement aléatoire
         if self.bot.user in message.mentions:
             await self._reply(message, FUNCHAT_MENTION_RESPONSES)
-            return
-
-        now = time.time()
-        if now - self.last_reply.get(message.channel.id, 0) < FUNCHAT_COOLDOWN_SECONDS:
-            return
-
-        if content.endswith("?") and random.random() < FUNCHAT_QUESTION_CHANCE:
-            self.last_reply[message.channel.id] = now
-            await self._reply(message, FUNCHAT_8BALL_RESPONSES)
-            return
-
-        if random.random() < FUNCHAT_CHANCE:
-            self.last_reply[message.channel.id] = now
-            await self._reply(message, FUNCHAT_RESPONSES)
 
     @app_commands.command(name="casier", description="Affiche le casier (running gag tenu par l'IA) d'un membre")
     @app_commands.describe(membre="Membre dont voir le casier (toi par défaut)")
