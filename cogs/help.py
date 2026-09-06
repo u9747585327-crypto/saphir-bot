@@ -15,12 +15,42 @@ SECTIONS = [
     ("cogs.prison", "🔒 Alcatraz"),
     ("cogs.logs", "📋 Logs"),
     ("cogs.leveling", "📊 Niveaux"),
+    ("cogs.brawlstars", "🎮 Brawl Stars"),
     ("cogs.osint", "🔍 Recherche Discord"),
     ("cogs.moderation", "🔨 Modération"),
     ("cogs.broadcast", "📨 Messages privés"),
     ("cogs.funchat", "🤖 Chat IA"),
     ("cogs.diagnostic", "🩺 Diagnostic"),
 ]
+
+
+def build_command_fields(bot: commands.Bot, guild: discord.Guild) -> list:
+    """Retourne une liste de (titre, valeur) prête à ajouter comme champs d'embed —
+    réutilisé par +help et par le salon d'explication de /setup-administration."""
+    all_commands = bot.tree.get_commands(guild=guild)
+    by_module = {}
+    for cmd in all_commands:
+        by_module.setdefault(cmd.module, []).append(cmd)
+
+    fields = []
+    seen = set()
+    for module_name, title in SECTIONS:
+        cmds = by_module.get(module_name)
+        if not cmds:
+            continue
+        seen.add(module_name)
+        value = "\n".join(f"`/{c.name}` — {c.description}" for c in sorted(cmds, key=lambda c: c.name))
+        fields.append((title, value))
+
+    # filet de sécurité : un cog ajouté plus tard mais pas encore listé dans SECTIONS
+    # apparaît quand même, sous son nom de module brut, plutôt que de disparaître.
+    for module_name, cmds in by_module.items():
+        if module_name in seen:
+            continue
+        value = "\n".join(f"`/{c.name}` — {c.description}" for c in sorted(cmds, key=lambda c: c.name))
+        fields.append((module_name, value))
+
+    return fields
 
 
 class Help(commands.Cog):
@@ -33,14 +63,10 @@ class Help(commands.Cog):
             await ctx.send("Utilise cette commande sur un serveur, pas en MP.")
             return
 
-        all_commands = self.bot.tree.get_commands(guild=ctx.guild)
-        if not all_commands:
+        fields = build_command_fields(self.bot, ctx.guild)
+        if not fields:
             await ctx.send("Aucune commande synchronisée pour l'instant — réessaie dans quelques secondes.")
             return
-
-        by_module = {}
-        for cmd in all_commands:
-            by_module.setdefault(cmd.module, []).append(cmd)
 
         embed = discord.Embed(
             title="💎 Commandes de Saphir",
@@ -50,23 +76,8 @@ class Help(commands.Cog):
             ),
             color=discord.Color(COLORS["saphir"]),
         )
-
-        seen = set()
-        for module_name, title in SECTIONS:
-            cmds = by_module.get(module_name)
-            if not cmds:
-                continue
-            seen.add(module_name)
-            value = "\n".join(f"`/{c.name}` — {c.description}" for c in sorted(cmds, key=lambda c: c.name))
+        for title, value in fields:
             embed.add_field(name=title, value=value, inline=False)
-
-        # filet de sécurité : un cog ajouté plus tard mais pas encore listé dans SECTIONS
-        # apparaît quand même, sous son nom de module brut, plutôt que de disparaître.
-        for module_name, cmds in by_module.items():
-            if module_name in seen:
-                continue
-            value = "\n".join(f"`/{c.name}` — {c.description}" for c in sorted(cmds, key=lambda c: c.name))
-            embed.add_field(name=module_name, value=value, inline=False)
 
         embed.set_footer(text="+help pour revoir cette liste")
         await ctx.send(embed=embed)

@@ -3,6 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from cogs._shared import handle_app_error
+from cogs.help import build_command_fields
 from config import (
     ADMIN_CATEGORY_NAME,
     ADMIN_COMMAND_CHANNEL_NAME,
@@ -239,7 +240,13 @@ class Hierarchy(commands.Cog):
                     perm_text = ", ".join(PERM_LABELS.get(p, p) for p in perms) if perms else "Aucune permission spéciale"
                     role_blocks.append(f"**{label}**\n{perm_text}")
                 info_text = "🛠️ **Hiérarchie des rôles**\n\n" + "\n\n".join(role_blocks)
-                info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["saphir"]))
+                info_embed = discord.Embed(
+                    title="🛠️ Récapitulatif — rôles & commandes",
+                    description=info_text,
+                    color=discord.Color(COLORS["saphir"]),
+                )
+                for title, value in build_command_fields(self.bot, guild):
+                    info_embed.add_field(name=title, value=value, inline=False)
                 info_embed.set_footer(text="Saphir · Administration info")
                 await info_channel.send(embed=info_embed)
         except discord.Forbidden:

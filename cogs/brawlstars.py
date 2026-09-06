@@ -33,8 +33,11 @@ LEADERBOARD_MAX_ENTRIES = 15
 # clé générée sur developer.brawlstars.com — IMPORTANT : elle doit être verrouillée sur l'IP
 # du proxy RoyaleAPI (45.79.218.79 au moment de l'écriture, voir docs.royaleapi.com/proxy.html),
 # pas sur l'IP de Render qui change à chaque redéploiement.
-_API_KEY = os.environ.get("BRAWLSTARS_API_KEY")
-_API_BASE = os.environ.get("BRAWLSTARS_API_BASE", BRAWLSTARS_API_BASE)
+# .strip() : un copier-coller de JWT (clé sur 3+ lignes affichées) embarque souvent un
+# retour à la ligne ou une espace en trop, ce qu'aiohttp refuse ensuite avec "Forbidden
+# control character detected in headers" — invisible tant qu'on ne l'a pas nettoyé ici.
+_API_KEY = (os.environ.get("BRAWLSTARS_API_KEY") or "").strip() or None
+_API_BASE = os.environ.get("BRAWLSTARS_API_BASE", BRAWLSTARS_API_BASE).strip()
 
 VALID_TAG_CHARS = set("0289PYLQGRJCUV")
 
@@ -113,6 +116,17 @@ async def _get_all_links(guild_id: int) -> dict:
     return data.get(str(guild_id), {})
 
 
+def _icon_url(icon_id) -> str | None:
+    """Icône de profil via le CDN public Brawlify (cdn.brawlify.com) — gratuit, sans clé,
+    et l'icône réelle du joueur/club plutôt que son avatar Discord (icon.id vient de l'API
+    Supercell, l'image elle-même n'est fournie par aucun endpoint officiel)."""
+    return f"https://cdn.brawlify.com/profile-icons/regular/{icon_id}.png" if icon_id else None
+
+
+def _badge_url(badge_id) -> str | None:
+    return f"https://cdn.brawlify.com/club-badges/regular/{badge_id}.png" if badge_id else None
+
+
 def _build_player_embed(data: dict, tag: str) -> discord.Embed:
     club = data.get("club")
     embed = discord.Embed(title=f"🎮 {data['name']}", description=tag, color=discord.Color(COLORS["gold"]))
@@ -123,6 +137,9 @@ def _build_player_embed(data: dict, tag: str) -> discord.Embed:
     embed.add_field(name="🥊 Victoires Duo", value=str(data.get("duoVictories", 0)))
     embed.add_field(name="👤 Victoires Solo", value=str(data.get("soloVictories", 0)))
     embed.add_field(name="🏟️ Club", value=club["name"] if club else "Aucun", inline=False)
+    icon_url = _icon_url(data.get("icon", {}).get("id"))
+    if icon_url:
+        embed.set_thumbnail(url=icon_url)
     return embed
 
 
@@ -182,6 +199,9 @@ class LinkTagModal(SaphirModal, title="🔗 Lier un compte Brawl Stars"):
         embed = discord.Embed(title=f"🎮 {data['name']}", description=display_tag, color=discord.Color(COLORS["gold"]))
         embed.add_field(name="🏆 Trophées", value=str(data["trophies"]))
         embed.add_field(name="🏟️ Club", value=club["name"] if club else "Aucun")
+        icon_url = _icon_url(data.get("icon", {}).get("id"))
+        if icon_url:
+            embed.set_thumbnail(url=icon_url)
 
         view = ConfirmLinkView(interaction.user.id, interaction.guild.id, display_tag)
         await interaction.followup.send(
@@ -243,6 +263,9 @@ class ClubTagModal(SaphirModal, title="🏟️ Rechercher un club Brawl Stars"):
         embed.add_field(name="🔓 Type", value=data["type"].capitalize())
         if top_members:
             embed.add_field(name="Top membres", value=top_members, inline=False)
+        badge_url = _badge_url(data.get("badgeId"))
+        if badge_url:
+            embed.set_thumbnail(url=badge_url)
         await interaction.followup.send(embed=embed)
 
 
