@@ -6,8 +6,22 @@ from discord import app_commands
 from discord.ext import commands
 
 from cogs._shared import SaphirModal, handle_app_error
-from config import BRAWLSTARS_API_BASE, BRAWLSTARS_LINKS_FILE, COLORS
+from config import (
+    BRAWLSTARS_API_BASE,
+    BRAWLSTARS_CATEGORY_NAME,
+    BRAWLSTARS_INFO_CHANNEL_NAME,
+    BRAWLSTARS_LINKS_FILE,
+    COLORS,
+)
 from storage import aload_json, asave_json
+
+INFO_TEXT = (
+    "🎮 **Commandes Brawl Stars**\n\n"
+    "- `/lier-brawlstars` — relie ton compte Discord à ton tag de joueur.\n"
+    "- `/brawlstats [membre]` — affiche les stats du compte relié (toi par défaut).\n"
+    "- `/brawlclub` — affiche les infos d'un club via son tag.\n\n"
+    "Ces commandes fonctionnent dans n'importe quel salon du serveur."
+)
 
 # clé générée sur developer.brawlstars.com — IMPORTANT : elle doit être verrouillée sur l'IP
 # du proxy RoyaleAPI (45.79.218.79 au moment de l'écriture, voir docs.royaleapi.com/proxy.html),
@@ -182,6 +196,54 @@ class BrawlStars(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    @app_commands.command(name="setup-brawlstars", description="Crée le salon d'information Brawl Stars")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def setup_brawlstars(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        guild = interaction.guild
+        report = []
+
+        category = discord.utils.get(guild.categories, name=BRAWLSTARS_CATEGORY_NAME)
+        try:
+            if category is None:
+                category = await guild.create_category(BRAWLSTARS_CATEGORY_NAME, reason="Configuration Brawl Stars (Saphir)")
+                report.append(f"✅ Catégorie créée : {BRAWLSTARS_CATEGORY_NAME}")
+            else:
+                report.append(f"= Catégorie déjà présente : {BRAWLSTARS_CATEGORY_NAME}")
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Permissions insuffisantes pour créer la catégorie.", ephemeral=True)
+            return
+
+        readonly_overwrites = {guild.default_role: discord.PermissionOverwrite(send_messages=False)}
+        info_channel = discord.utils.get(category.channels, name=BRAWLSTARS_INFO_CHANNEL_NAME)
+        try:
+            if info_channel is None:
+                info_channel = await guild.create_text_channel(
+                    BRAWLSTARS_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites,
+                    reason="Configuration Brawl Stars (Saphir)",
+                )
+                report.append(f"✅ Salon créé : {info_channel.mention}")
+            else:
+                await info_channel.edit(overwrites=readonly_overwrites, reason="Configuration Brawl Stars (Saphir)")
+                report.append(f"= Salon déjà présent : {info_channel.mention}")
+
+            already_posted = False
+            async for msg in info_channel.history(limit=10):
+                if msg.author.id == self.bot.user.id and msg.embeds and msg.embeds[0].footer.text == "Saphir · Brawl Stars info":
+                    already_posted = True
+                    break
+            if not already_posted:
+                info_embed = discord.Embed(description=INFO_TEXT, color=discord.Color(COLORS["gold"]))
+                info_embed.set_footer(text="Saphir · Brawl Stars info")
+                await info_channel.send(embed=info_embed)
+        except discord.Forbidden:
+            report.append(f"❌ Salon refusé (permissions) : {BRAWLSTARS_INFO_CHANNEL_NAME}")
+
+        embed = discord.Embed(
+            title="🎮 Configuration Brawl Stars", description="\n".join(report), color=discord.Color(COLORS["saphir"])
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
     @app_commands.command(name="lier-brawlstars", description="Relie ton compte Discord à ton tag de joueur Brawl Stars")
     async def lier_brawlstars(self, interaction: discord.Interaction):
         await interaction.response.send_modal(LinkTagModal())
@@ -213,13 +275,14 @@ class BrawlStars(commands.Cog):
         embed.add_field(name="🥊 Victoires Duo", value=str(data.get("duoVictories", 0)))
         embed.add_field(name="👤 Victoires Solo", value=str(data.get("soloVictories", 0)))
         embed.add_field(name="🏟️ Club", value=club["name"] if club else "Aucun", inline=False)
-        embed.set_thumbnail(url=target.display_avatar.url)
+        embed.set_image(url=target.display_avatar.with_size(512).url)
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="brawlclub", description="Affiche les infos d'un club Brawl Stars via son tag")
     async def brawlclub(self, interaction: discord.Interaction):
         await interaction.response.send_modal(ClubTagModal())
 
+    @setup_brawlstars.error
     @lier_brawlstars.error
     @brawlstats.error
     @brawlclub.error

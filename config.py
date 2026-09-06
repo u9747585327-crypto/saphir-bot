@@ -111,6 +111,8 @@ BRAWLSTARS_LINKS_FILE = "data/brawlstars_links.json"
 # proxy RoyaleAPI par défaut : contourne le verrou par IP de l'API officielle (l'IP de sortie
 # de Render change à chaque redéploiement, donc une clé verrouillée dessus casserait sans arrêt)
 BRAWLSTARS_API_BASE = "https://bsproxy.royaleapi.dev/v1"
+BRAWLSTARS_CATEGORY_NAME = "🎮 BRAWL STARS"
+BRAWLSTARS_INFO_CHANNEL_NAME = "🎮・brawl-stars-info"
 
 FUNCHAT_MENTION_RESPONSES = [
     "Ouais je suis là, calme-toi 😌",
