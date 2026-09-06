@@ -15,6 +15,7 @@ from config import (
     PRISON_TEXT_CHANNEL,
     PRISON_VOICE_CHANNEL,
 )
+from cogs._shared import SaphirModal
 from storage import aload_json, asave_json
 
 DURATION_RE = re.compile(r"^(\d+)\s*([smhdw])$", re.IGNORECASE)
@@ -39,6 +40,80 @@ def _has_jail_access(role_name: str):
         return role is not None and role in interaction.user.roles
 
     return app_commands.check(predicate)
+
+
+class JailModal(SaphirModal, title="⛓️ Envoyer un membre à Alcatraz"):
+    error_label = "jail"
+    duree = discord.ui.TextInput(label="Durée", placeholder="ex : 30s, 10m, 2h, 1d, 1w", max_length=10)
+    raison = discord.ui.TextInput(label="Raison", required=False, placeholder="Non spécifiée", max_length=500)
+
+    def __init__(self, cog: "Prison", membre: discord.Member, exile_role: discord.Role):
+        super().__init__()
+        self.cog = cog
+        self.membre = membre
+        self.exile_role = exile_role
+
+    async def on_submit(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        membre = self.membre
+        duree = str(self.duree.value)
+        raison = str(self.raison.value) or "Non spécifiée"
+
+        try:
+            delta = parse_duration(duree)
+        except ValueError as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+            return
+
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        removable_roles = [r for r in membre.roles if not r.is_default() and not r.managed]
+        unjail_at = datetime.datetime.now(datetime.timezone.utc) + delta
+
+        data = await aload_json(PRISON_DATA_FILE, {})
+        data.setdefault(str(guild.id), {})[str(membre.id)] = {
+            "role_ids": [r.id for r in removable_roles],
+            "unjail_at": unjail_at.isoformat(),
+            "reason": raison,
+            "moderator_id": interaction.user.id,
+        }
+
+        try:
+            if removable_roles:
+                await membre.remove_roles(*removable_roles, reason=f"Jail par {interaction.user} : {raison}")
+            await membre.add_roles(self.exile_role, reason=f"Jail par {interaction.user} : {raison}")
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Permissions insuffisantes (rôle du bot trop bas par rapport à ce membre ?).", ephemeral=True)
+            return
+
+        if membre.voice and membre.voice.channel:
+            try:
+                await membre.move_to(None, reason=f"Jail par {interaction.user} : {raison}")
+            except discord.HTTPException:
+                pass
+
+        embed = discord.Embed(title="⛓️ Membre envoyé à Alcatraz", color=discord.Color(COLORS["danger"]))
+        embed.add_field(name="Membre", value=membre.mention, inline=False)
+        embed.add_field(name="Durée", value=duree)
+        embed.add_field(name="Libération", value=discord.utils.format_dt(unjail_at, style="R"))
+        embed.add_field(name="Raison", value=raison, inline=False)
+        embed.add_field(name="Modérateur", value=interaction.user.mention, inline=False)
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        announce_msg = await self.cog._announce(guild, embed)
+        if announce_msg:
+            data[str(guild.id)][str(membre.id)]["announcement_channel_id"] = announce_msg.channel.id
+            data[str(guild.id)][str(membre.id)]["announcement_message_id"] = announce_msg.id
+
+        await asave_json(PRISON_DATA_FILE, data)
+
+        try:
+            await membre.send(
+                f"⛓️ Tu as été envoyé à Alcatraz sur **{guild.name}** pour {duree} (raison : {raison}). "
+                f"Tu retrouveras tes rôles automatiquement à ta libération."
+            )
+        except discord.HTTPException:
+            pass
 
 
 class Prison(commands.Cog):
@@ -195,87 +270,23 @@ class Prison(commands.Cog):
         return None
 
     @app_commands.command(name="jail", description="Envoie un membre à Alcatraz pour une durée donnée, en lui retirant ses rôles")
-    @app_commands.describe(
-        membre="Membre à emprisonner",
-        duree="Durée de la peine, ex : 30s, 10m, 2h, 1d, 1w",
-        raison="Raison de l'emprisonnement",
-    )
+    @app_commands.describe(membre="Membre à emprisonner")
     @_has_jail_access(PERM_JAIL_ROLE_NAME)
-    async def jail(
-        self,
-        interaction: discord.Interaction,
-        membre: discord.Member,
-        duree: str,
-        raison: str = "Non spécifiée",
-    ):
+    async def jail(self, interaction: discord.Interaction, membre: discord.Member):
         guild = interaction.guild
-        await interaction.response.defer(thinking=True, ephemeral=True)
-
-        try:
-            delta = parse_duration(duree)
-        except ValueError as e:
-            await interaction.followup.send(f"❌ {e}", ephemeral=True)
-            return
 
         exile_role = discord.utils.get(guild.roles, name=EXILE_ROLE_NAME)
         if exile_role is None:
-            await interaction.followup.send("Le rôle Exilé n'existe pas. Lance `/setup-prison` d'abord.", ephemeral=True)
+            await interaction.response.send_message("Le rôle Exilé n'existe pas. Lance `/setup-prison` d'abord.", ephemeral=True)
             return
 
         if exile_role in membre.roles:
-            await interaction.followup.send(f"{membre.mention} est déjà à Alcatraz. Utilise `/unjail` d'abord si besoin.", ephemeral=True)
-            return
-
-        removable_roles = [r for r in membre.roles if not r.is_default() and not r.managed]
-        unjail_at = datetime.datetime.now(datetime.timezone.utc) + delta
-
-        data = await aload_json(PRISON_DATA_FILE, {})
-        data.setdefault(str(guild.id), {})[str(membre.id)] = {
-            "role_ids": [r.id for r in removable_roles],
-            "unjail_at": unjail_at.isoformat(),
-            "reason": raison,
-            "moderator_id": interaction.user.id,
-        }
-
-        try:
-            if removable_roles:
-                await membre.remove_roles(*removable_roles, reason=f"Jail par {interaction.user} : {raison}")
-            await membre.add_roles(exile_role, reason=f"Jail par {interaction.user} : {raison}")
-        except discord.Forbidden:
-            await interaction.followup.send("❌ Permissions insuffisantes (rôle du bot trop bas par rapport à ce membre ?).", ephemeral=True)
-            return
-
-        if membre.voice and membre.voice.channel:
-            try:
-                await membre.move_to(None, reason=f"Jail par {interaction.user} : {raison}")
-            except discord.HTTPException:
-                pass
-
-        embed = discord.Embed(
-            title="⛓️ Membre envoyé à Alcatraz",
-            color=discord.Color(COLORS["danger"]),
-        )
-        embed.add_field(name="Membre", value=membre.mention, inline=False)
-        embed.add_field(name="Durée", value=duree)
-        embed.add_field(name="Libération", value=discord.utils.format_dt(unjail_at, style="R"))
-        embed.add_field(name="Raison", value=raison, inline=False)
-        embed.add_field(name="Modérateur", value=interaction.user.mention, inline=False)
-
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        announce_msg = await self._announce(guild, embed)
-        if announce_msg:
-            data[str(guild.id)][str(membre.id)]["announcement_channel_id"] = announce_msg.channel.id
-            data[str(guild.id)][str(membre.id)]["announcement_message_id"] = announce_msg.id
-
-        await asave_json(PRISON_DATA_FILE, data)
-
-        try:
-            await membre.send(
-                f"⛓️ Tu as été envoyé à Alcatraz sur **{guild.name}** pour {duree} (raison : {raison}). "
-                f"Tu retrouveras tes rôles automatiquement à ta libération."
+            await interaction.response.send_message(
+                f"{membre.mention} est déjà à Alcatraz. Utilise `/unjail` d'abord si besoin.", ephemeral=True
             )
-        except discord.HTTPException:
-            pass
+            return
+
+        await interaction.response.send_modal(JailModal(self, membre, exile_role))
 
     async def _release(self, guild: discord.Guild, user_id: str, entry: dict, reason: str):
         exile_role = discord.utils.get(guild.roles, name=EXILE_ROLE_NAME)

@@ -4,6 +4,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from cogs._shared import SaphirModal
+
 # délai entre deux MP quand il y en a plusieurs, pour éviter de se faire repérer/rate-limiter par Discord
 DM_SEND_DELAY_SECONDS = 1.0
 
@@ -92,6 +94,19 @@ async def _send_broadcast(interaction: discord.Interaction, targets: list, messa
             print(f"⚠️ Récap /mp : impossible de joindre l'auteur en MP non plus. Résultat : {summary}")
 
 
+class BroadcastMessageModal(SaphirModal, title="📨 Message à envoyer"):
+    error_label = "mp"
+    message = discord.ui.TextInput(label="Message", style=discord.TextStyle.paragraph, max_length=1900)
+
+    def __init__(self, targets: list, label: str):
+        super().__init__()
+        self.targets = targets
+        self.label = label
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await _send_broadcast(interaction, self.targets, str(self.message.value), self.label)
+
+
 async def _broadcast_error(interaction: discord.Interaction, error: app_commands.AppCommandError, command_name: str):
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("Seul un administrateur peut utiliser cette commande.", ephemeral=True)
@@ -114,27 +129,28 @@ class Broadcast(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="mp-tous", description="Envoie un MP à tous les membres du serveur")
-    @app_commands.describe(message="Contenu du message à envoyer")
     @app_commands.checks.has_permissions(administrator=True)
-    async def mp_tous(self, interaction: discord.Interaction, message: str):
+    async def mp_tous(self, interaction: discord.Interaction):
         targets = [m for m in interaction.guild.members if not m.bot]
-        await _send_broadcast(interaction, targets, message, f"**tout le serveur** ({len(targets)} membre(s))")
+        label = f"**tout le serveur** ({len(targets)} membre(s))"
+        await interaction.response.send_modal(BroadcastMessageModal(targets, label))
 
     @app_commands.command(name="mp-role", description="Envoie un MP à tous les membres ayant un rôle donné")
-    @app_commands.describe(role="Rôle dont les membres recevront le message", message="Contenu du message à envoyer")
+    @app_commands.describe(role="Rôle dont les membres recevront le message")
     @app_commands.checks.has_permissions(administrator=True)
-    async def mp_role(self, interaction: discord.Interaction, role: discord.Role, message: str):
+    async def mp_role(self, interaction: discord.Interaction, role: discord.Role):
         targets = [m for m in role.members if not m.bot]
-        await _send_broadcast(interaction, targets, message, f"tous les {role.mention} ({len(targets)} membre(s))")
+        label = f"tous les {role.mention} ({len(targets)} membre(s))"
+        await interaction.response.send_modal(BroadcastMessageModal(targets, label))
 
     @app_commands.command(name="mp-membre", description="Envoie un MP à un membre précis")
-    @app_commands.describe(membre="Membre à contacter", message="Contenu du message à envoyer")
+    @app_commands.describe(membre="Membre à contacter")
     @app_commands.checks.has_permissions(administrator=True)
-    async def mp_membre(self, interaction: discord.Interaction, membre: discord.Member, message: str):
+    async def mp_membre(self, interaction: discord.Interaction, membre: discord.Member):
         if membre.bot:
             await interaction.response.send_message("On ne peut pas envoyer de MP à un bot.", ephemeral=True)
             return
-        await _send_broadcast(interaction, [membre], message, membre.mention)
+        await interaction.response.send_modal(BroadcastMessageModal([membre], membre.mention))
 
     @mp_tous.error
     async def mp_tous_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):

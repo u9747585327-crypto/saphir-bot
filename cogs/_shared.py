@@ -31,3 +31,31 @@ async def handle_app_error(
             await interaction.response.send_message(message, ephemeral=True)
     except discord.HTTPException:
         pass
+
+
+async def handle_modal_error(interaction: discord.Interaction, error: Exception, command_label: str = "un formulaire"):
+    """Équivalent de handle_app_error pour les erreurs survenant dans Modal.on_submit
+    (non interceptées par les .error des app_commands)."""
+    original = getattr(error, "original", error)
+    if isinstance(original, discord.Forbidden):
+        message = "❌ Le bot n'a pas les permissions nécessaires pour faire ça ici."
+    else:
+        message = f"❌ Une erreur est survenue : {original}"
+    print(f"⚠️ Erreur dans {command_label} : {original}")
+
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
+    except discord.HTTPException:
+        pass
+
+
+class SaphirModal(discord.ui.Modal):
+    """Modal de base : garantit qu'une erreur dans on_submit répond toujours à
+    l'utilisateur au lieu de laisser Discord afficher « The application did not respond »."""
+    error_label = "un formulaire"
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        await handle_modal_error(interaction, error, self.error_label)

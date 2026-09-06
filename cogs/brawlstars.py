@@ -5,7 +5,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from cogs._shared import handle_app_error
+from cogs._shared import SaphirModal, handle_app_error
 from config import BRAWLSTARS_API_BASE, BRAWLSTARS_LINKS_FILE, COLORS
 from storage import aload_json, asave_json
 
@@ -81,32 +81,110 @@ async def _set_link(guild_id: int, user_id: int, tag: str):
     await asave_json(BRAWLSTARS_LINKS_FILE, data)
 
 
-class BrawlStars(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
+class ConfirmLinkView(discord.ui.View):
+    """Affiche le profil trouvé et n'enregistre le lien que si l'auteur confirme —
+    évite de lier le mauvais tag suite à une faute de frappe."""
 
-    @app_commands.command(name="lier-brawlstars", description="Relie ton compte Discord à ton tag de joueur Brawl Stars")
-    @app_commands.describe(tag="Ton tag de joueur, ex : #ABC123 (visible dans le jeu sous ton pseudo)")
-    async def lier_brawlstars(self, interaction: discord.Interaction, tag: str):
-        if not _tag_is_plausible(tag):
+    def __init__(self, author_id: int, guild_id: int, tag: str):
+        super().__init__(timeout=60)
+        self.author_id = author_id
+        self.guild_id = guild_id
+        self.tag = tag
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("Seul l'auteur de la commande peut confirmer.", ephemeral=True)
+            return False
+        return True
+
+    async def _disable_and_edit(self, interaction: discord.Interaction, content: str):
+        for child in self.children:
+            child.disabled = True
+        self.stop()
+        await interaction.response.edit_message(content=content, embed=None, view=self)
+
+    @discord.ui.button(label="Confirmer", style=discord.ButtonStyle.success, emoji="✅")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _set_link(self.guild_id, self.author_id, self.tag)
+        await self._disable_and_edit(interaction, f"✅ Compte relié : {self.tag}.")
+
+    @discord.ui.button(label="Annuler", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._disable_and_edit(interaction, "Annulé — aucun compte relié.")
+
+
+class LinkTagModal(SaphirModal, title="🔗 Lier un compte Brawl Stars"):
+    error_label = "lier-brawlstars"
+    tag = discord.ui.TextInput(label="Tag Brawl Stars", placeholder="ABC123 (le # est facultatif)", min_length=3, max_length=14)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = str(self.tag.value)
+        if not _tag_is_plausible(raw):
             await interaction.response.send_message(
-                "❌ Ce tag ne ressemble pas à un tag Brawl Stars valide (ex : #ABC123).", ephemeral=True
+                "❌ Ce tag ne ressemble pas à un tag Brawl Stars valide (ex : ABC123).", ephemeral=True
             )
             return
 
         await interaction.response.defer(thinking=True, ephemeral=True)
-        normalized = _normalize_tag(tag)
+        normalized = _normalize_tag(raw)
         data, error = await _bs_get(f"players/{normalized}")
         if error:
             await interaction.followup.send(_error_message(error), ephemeral=True)
             return
 
         display_tag = normalized.replace("%23", "#")
-        await _set_link(interaction.guild.id, interaction.user.id, display_tag)
+        club = data.get("club")
+        embed = discord.Embed(title=f"🎮 {data['name']}", description=display_tag, color=discord.Color(COLORS["gold"]))
+        embed.add_field(name="🏆 Trophées", value=str(data["trophies"]))
+        embed.add_field(name="🏟️ Club", value=club["name"] if club else "Aucun")
+
+        view = ConfirmLinkView(interaction.user.id, interaction.guild.id, display_tag)
         await interaction.followup.send(
-            f"✅ Compte relié : **{data['name']}** ({display_tag}) — 🏆 {data['trophies']} trophées.",
-            ephemeral=True,
+            content="Voici le profil trouvé — c'est bien toi ?", embed=embed, view=view, ephemeral=True
         )
+
+
+class ClubTagModal(SaphirModal, title="🏟️ Rechercher un club Brawl Stars"):
+    error_label = "brawlclub"
+    tag = discord.ui.TextInput(label="Tag du club", placeholder="ABC123 (le # est facultatif)", min_length=3, max_length=14)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = str(self.tag.value)
+        if not _tag_is_plausible(raw):
+            await interaction.response.send_message(
+                "❌ Ce tag ne ressemble pas à un tag Brawl Stars valide (ex : ABC123).", ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(thinking=True)
+        data, error = await _bs_get(f"clubs/{_normalize_tag(raw)}")
+        if error:
+            await interaction.followup.send(_error_message(error))
+            return
+
+        members = data.get("members", [])
+        top_members = "\n".join(f"🏆 {m['trophies']} — {m['name']} ({m['role'].capitalize()})" for m in members[:5])
+
+        embed = discord.Embed(
+            title=f"🏟️ {data['name']}",
+            description=data.get("description") or "*(pas de description)*",
+            color=discord.Color(COLORS["gold"]),
+        )
+        embed.add_field(name="🏆 Trophées du club", value=str(data["trophies"]))
+        embed.add_field(name="👥 Membres", value=f"{len(members)}/30")
+        embed.add_field(name="🔓 Type", value=data["type"].capitalize())
+        if top_members:
+            embed.add_field(name="Top membres", value=top_members, inline=False)
+        await interaction.followup.send(embed=embed)
+
+
+class BrawlStars(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @app_commands.command(name="lier-brawlstars", description="Relie ton compte Discord à ton tag de joueur Brawl Stars")
+    async def lier_brawlstars(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(LinkTagModal())
 
     @app_commands.command(name="brawlstats", description="Affiche les stats Brawl Stars d'un membre (ou toi par défaut)")
     @app_commands.describe(membre="Membre dont voir les stats (toi par défaut si son compte est relié)")
@@ -139,30 +217,8 @@ class BrawlStars(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="brawlclub", description="Affiche les infos d'un club Brawl Stars via son tag")
-    @app_commands.describe(tag="Tag du club, ex : #ABC123")
-    async def brawlclub(self, interaction: discord.Interaction, tag: str):
-        if not _tag_is_plausible(tag):
-            await interaction.response.send_message(
-                "❌ Ce tag ne ressemble pas à un tag Brawl Stars valide (ex : #ABC123).", ephemeral=True
-            )
-            return
-
-        await interaction.response.defer(thinking=True)
-        data, error = await _bs_get(f"clubs/{_normalize_tag(tag)}")
-        if error:
-            await interaction.followup.send(_error_message(error))
-            return
-
-        members = data.get("members", [])
-        top_members = "\n".join(f"🏆 {m['trophies']} — {m['name']} ({m['role'].capitalize()})" for m in members[:5])
-
-        embed = discord.Embed(title=f"🏟️ {data['name']}", description=data.get("description") or "*(pas de description)*", color=discord.Color(COLORS["gold"]))
-        embed.add_field(name="🏆 Trophées du club", value=str(data["trophies"]))
-        embed.add_field(name="👥 Membres", value=f"{len(members)}/30")
-        embed.add_field(name="🔓 Type", value=data["type"].capitalize())
-        if top_members:
-            embed.add_field(name="Top membres", value=top_members, inline=False)
-        await interaction.followup.send(embed=embed)
+    async def brawlclub(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(ClubTagModal())
 
     @lier_brawlstars.error
     @brawlstats.error
