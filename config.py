@@ -32,6 +32,7 @@ HONEYPOT_CHANNEL_NAME = "🍯・ne-pas-écrire-ici"
 PRISON_CATEGORY_NAME = "🔒 ALCATRAZ"
 PRISON_TEXT_CHANNEL = "🔒・cellule"
 PRISON_VOICE_CHANNEL = "🔒 Isolement"
+PRISON_INFO_CHANNEL_NAME = "🔒・infos-alcatraz"
 EXILE_ROLE_NAME = "⛓️ Exilé"
 PRISON_DATA_FILE = "data/prison.json"
 

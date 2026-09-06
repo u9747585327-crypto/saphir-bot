@@ -12,6 +12,7 @@ from config import (
     PERM_UNJAIL_ROLE_NAME,
     PRISON_CATEGORY_NAME,
     PRISON_DATA_FILE,
+    PRISON_INFO_CHANNEL_NAME,
     PRISON_TEXT_CHANNEL,
     PRISON_VOICE_CHANNEL,
 )
@@ -199,29 +200,42 @@ class Prison(commands.Cog):
                 report.append(f"🔄 Salon texte mis à jour : {PRISON_TEXT_CHANNEL}")
         except discord.Forbidden:
             report.append(f"❌ Salon texte refusé (permissions) : {PRISON_TEXT_CHANNEL}")
-            text_channel = None
 
-        if text_channel is not None:
-            try:
-                already_pinned = any(
-                    msg.author.id == self.bot.user.id and msg.embeds and msg.embeds[0].footer.text == "Saphir · Alcatraz info"
-                    for msg in await text_channel.pins()
+        # salon d'explication en lecture seule pour tout le monde, y compris le rôle Exilé
+        # (contrairement aux autres salons de la catégorie, où Exilé peut écrire)
+        info_overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
+            exile_role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
+        }
+        info_channel = discord.utils.get(category.channels, name=PRISON_INFO_CHANNEL_NAME)
+        try:
+            if info_channel is None:
+                info_channel = await guild.create_text_channel(
+                    PRISON_INFO_CHANNEL_NAME, category=category, overwrites=info_overwrites, reason="Configuration de la prison (Saphir)"
                 )
-                if not already_pinned:
-                    info_text = (
-                        "🔒 **Alcatraz**\n\n"
-                        "Un membre envoyé ici par un modérateur (`/jail`) perd temporairement tous ses "
-                        "rôles et ne peut communiquer que dans cette catégorie, pour la durée indiquée "
-                        "dans l'annonce. Ses rôles sont restaurés automatiquement à la fin de la peine "
-                        "(ou via `/unjail` pour une libération anticipée)."
-                    )
-                    info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["danger"]))
-                    info_embed.set_footer(text="Saphir · Alcatraz info")
-                    info_msg = await text_channel.send(embed=info_embed)
-                    await info_msg.pin(reason="Info Alcatraz (Saphir)")
-                    report.append("📌 Message d'explication épinglé")
-            except discord.HTTPException:
-                report.append("⚠️ Message d'explication non épinglé (permissions ou limite d'épingles)")
+                report.append(f"✅ Salon d'explication créé : {info_channel.mention}")
+            else:
+                await info_channel.edit(overwrites=info_overwrites, reason="Configuration de la prison (Saphir)")
+                report.append(f"= Salon d'explication déjà présent : {info_channel.mention}")
+
+            already_posted = False
+            async for msg in info_channel.history(limit=10):
+                if msg.author.id == self.bot.user.id and msg.embeds and msg.embeds[0].footer.text == "Saphir · Alcatraz info":
+                    already_posted = True
+                    break
+            if not already_posted:
+                info_text = (
+                    "🔒 **Alcatraz**\n\n"
+                    "Un membre envoyé ici par un modérateur (`/jail`) perd temporairement tous ses "
+                    "rôles et ne peut communiquer que dans cette catégorie, pour la durée indiquée "
+                    "dans l'annonce. Ses rôles sont restaurés automatiquement à la fin de la peine "
+                    "(ou via `/unjail` pour une libération anticipée)."
+                )
+                info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["danger"]))
+                info_embed.set_footer(text="Saphir · Alcatraz info")
+                await info_channel.send(embed=info_embed)
+        except discord.Forbidden:
+            report.append(f"❌ Salon d'explication refusé (permissions) : {PRISON_INFO_CHANNEL_NAME}")
 
         voice_channel = discord.utils.get(category.channels, name=PRISON_VOICE_CHANNEL)
         try:

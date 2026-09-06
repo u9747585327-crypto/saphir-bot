@@ -262,7 +262,29 @@ class Leveling(commands.Cog):
             except discord.Forbidden:
                 report.append(f"❌ Rôle refusé (permissions) : {name}")
 
-        # 2.5. salon d'explication (paliers + commandes), posté une seule fois
+        # 2.5. rattrapage : la synchro des rôles ne se déclenche normalement que sur un
+        # NOUVEAU passage de niveau (voir _apply_xp/_sync_level_roles) — un membre déjà
+        # qualifié avant que son rôle n'existe (ou avant ce /setup-niveaux) ne le recevait
+        # donc jamais tout seul. On rattrape ici tous les membres déjà éligibles.
+        levels_data = await aload_json(LEVELS_DATA_FILE, {})
+        guild_levels = levels_data.get(str(guild.id), {})
+        backfilled = 0
+        for user_id_str, entry in guild_levels.items():
+            member = guild.get_member(int(user_id_str))
+            if member is None:
+                continue
+            level = entry.get("level", 0)
+            missing = any(
+                level >= int(threshold_str) and guild.get_role(role_id) not in member.roles
+                for threshold_str, role_id in level_role_ids.items()
+            )
+            if missing:
+                await self._sync_level_roles(member, level, settings)
+                backfilled += 1
+        if backfilled:
+            report.append(f"🔄 Rôles rattrapés pour {backfilled} membre(s) déjà qualifié(s)")
+
+        # 2.6. salon d'explication (paliers + commandes), posté une seule fois
         info_channel = discord.utils.get(guild.text_channels, name=LEVELS_INFO_CHANNEL_NAME)
         try:
             if info_channel is None:
