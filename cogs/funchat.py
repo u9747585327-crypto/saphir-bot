@@ -23,7 +23,7 @@ from storage import aload_json, asave_json
 # --- IA Groq (gratuite, palier très généreux : 14 400 requêtes/jour) avec repli
 # automatique sur les réponses toutes faites si la clé manque ou l'appel échoue ---
 GROQ_MODEL = "openai/gpt-oss-120b"
-GROQ_MAX_HISTORY = 6  # nombre de messages (user+assistant confondus) gardés par salon
+CHANNEL_LOG_SIZE = 20  # nombre de derniers messages du salon (tout le monde, pas que l'IA) gardés pour le contexte
 GROQ_SYSTEM_INSTRUCTION = (
     "Tu es Saphir, le bot Discord de ce serveur, et tu fais partie de la bande. L'humour du "
     "serveur c'est le clash cash entre potes : une vanne courte et sèche, direct dans le mille sur "
@@ -39,7 +39,10 @@ GROQ_SYSTEM_INSTRUCTION = (
     "proche (\"essaye autre chose\", \"suivant\", \"ok next\", etc.) — ce sont des exemples de "
     "cadence, pas une banque de réponses. Chaque vanne doit obligatoirement mordre sur un mot ou "
     "une idée précise tirée du message réel de la personne : si ta phrase marcherait aussi bien "
-    "collée sous n'importe quel autre message, elle est ratée, recommence. INTERDIT formellement : "
+    "collée sous n'importe quel autre message, elle est ratée, recommence. Les messages qui suivent "
+    "sont les derniers échanges réels de ce salon (plusieurs membres peuvent y parler, chaque ligne "
+    "commence par le pseudo de son auteur) : sers-t'en pour comprendre le contexte, les running "
+    "gags et qui parle à qui, mais ta réponse ne vise QUE le tout dernier message. INTERDIT formellement : "
     "les phrases genre \"aussi [adjectif] que [comparaison élaborée]\", toute métaphore ou "
     "comparaison façon rédaction de prof, le vocabulaire soutenu ou ampoulé, les phrases à rallonge "
     "avec virgule + rebondissement. 3 à 10 mots, jamais plus d'une quinzaine. Deux limites strictes "
@@ -82,9 +85,10 @@ async def _add_dossier_entry(guild_id: int, user_id: int, entry: str):
     await asave_json(DOSSIER_DATA_FILE, data)
 
 
-async def _generate_ai_reply(history: list, user_content: str, dossier: list = None):
+async def _generate_ai_reply(channel_log: list, dossier: list = None):
     """Retourne None si l'IA n'est pas configurée ou si l'appel échoue (clé invalide,
-    quota, réseau...) — le repli sur les réponses toutes faites prend alors le relais."""
+    quota, réseau...) — le repli sur les réponses toutes faites prend alors le relais.
+    `channel_log` contient déjà le message déclencheur comme dernière entrée."""
     if _groq_client is None:
         return None
     try:
@@ -99,8 +103,7 @@ async def _generate_ai_reply(history: list, user_content: str, dossier: list = N
                     "les recopier mot pour mot."
                 ),
             })
-        messages.extend(history)
-        messages.append({"role": "user", "content": user_content[:500]})
+        messages.extend(channel_log)
 
         response = await _groq_client.chat.completions.create(
             model=GROQ_MODEL,
@@ -124,19 +127,20 @@ class FunChat(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.last_reply = {}
-        self.history = {}
+        self.channel_log = {}
+
+    def _log_message(self, channel_id: int, role: str, content: str):
+        log = self.channel_log.setdefault(channel_id, [])
+        log.append({"role": role, "content": content})
+        del log[:-CHANNEL_LOG_SIZE]
 
     async def _reply(self, message: discord.Message, fallback_pool: list):
         channel_id = message.channel.id
-        history = self.history.setdefault(channel_id, [])
-        user_content = message.content.strip()
         dossier = await _get_dossier(message.guild.id, message.author.id)
 
-        reply = await _generate_ai_reply(history, user_content, dossier=dossier)
+        reply = await _generate_ai_reply(self.channel_log.get(channel_id, []), dossier=dossier)
         if reply:
-            history.append({"role": "user", "content": user_content[:500]})
-            history.append({"role": "assistant", "content": reply})
-            del history[:-GROQ_MAX_HISTORY]
+            self._log_message(channel_id, "assistant", reply)
             await _add_dossier_entry(message.guild.id, message.author.id, reply)
         else:
             reply = random.choice(fallback_pool)
@@ -157,6 +161,10 @@ class FunChat(commands.Cog):
         content = message.content.strip()
         if not content:
             return
+
+        # journalise CHAQUE message réel du salon (pas que ceux qui déclenchent une réponse)
+        # pour que l'IA ait du vrai contexte de conversation, pas juste ses propres échanges
+        self._log_message(message.channel.id, "user", f"{message.author.display_name} : {content[:300]}")
 
         # mentionner le bot déclenche toujours une réponse, sans cooldown
         if self.bot.user in message.mentions:
