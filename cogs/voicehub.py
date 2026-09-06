@@ -5,10 +5,17 @@ from discord import app_commands
 from discord.ext import commands
 
 from cogs._shared import handle_app_error
-from config import VOICE_HUB_CATEGORY_NAME, VOICE_HUB_CHANNEL_NAME, COLORS
+from config import VOICE_HUB_CATEGORY_NAME, VOICE_HUB_CHANNEL_NAME, VOICE_HUB_INFO_CHANNEL_NAME, COLORS
 
 # anti-spam : délai minimal entre deux créations de salon perso par le même membre
 SPAWN_COOLDOWN_SECONDS = 15
+
+CONTROL_PANEL_TEXT = (
+    "✏️ **Renommer** — change le nom du salon\n"
+    "🔢 **Limite** — fixe un nombre de places max\n"
+    "🔇 **Muet** — rend un membre muet dans le salon\n"
+    "⛔ **Exclure** — déconnecte et bloque un membre"
+)
 
 
 def build_control_embed(owner: discord.Member) -> discord.Embed:
@@ -16,10 +23,7 @@ def build_control_embed(owner: discord.Member) -> discord.Embed:
         title="🎧 Ton salon vocal",
         description=(
             f"{owner.mention} est aux commandes. Utilise les boutons ci-dessous pour gérer ton salon :\n\n"
-            "✏️ **Renommer** — change le nom du salon\n"
-            "🔢 **Limite** — fixe un nombre de places max\n"
-            "🔇 **Muet** — rend un membre muet dans le salon\n"
-            "⛔ **Exclure** — déconnecte et bloque un membre"
+            + CONTROL_PANEL_TEXT
         ),
         color=discord.Color(COLORS["saphir"]),
     )
@@ -162,17 +166,19 @@ class VoiceHub(commands.Cog):
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_vocal(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True, ephemeral=True)
         guild = interaction.guild
+        report = []
 
         category = discord.utils.get(guild.categories, name=VOICE_HUB_CATEGORY_NAME)
         try:
             if category is None:
                 category = await guild.create_category(VOICE_HUB_CATEGORY_NAME, reason="Configuration vocal (Saphir)")
-                cat_status = f"✅ Catégorie créée : {VOICE_HUB_CATEGORY_NAME}"
+                report.append(f"✅ Catégorie créée : {VOICE_HUB_CATEGORY_NAME}")
             else:
-                cat_status = f"= Catégorie déjà présente : {VOICE_HUB_CATEGORY_NAME}"
+                report.append(f"= Catégorie déjà présente : {VOICE_HUB_CATEGORY_NAME}")
         except discord.Forbidden:
-            await interaction.response.send_message("❌ Permissions insuffisantes pour créer la catégorie.", ephemeral=True)
+            await interaction.followup.send("❌ Permissions insuffisantes pour créer la catégorie.", ephemeral=True)
             return
 
         hub = discord.utils.get(category.channels, name=VOICE_HUB_CHANNEL_NAME)
@@ -181,22 +187,44 @@ class VoiceHub(commands.Cog):
                 await guild.create_voice_channel(
                     VOICE_HUB_CHANNEL_NAME, category=category, reason="Configuration vocal (Saphir)"
                 )
-                hub_status = f"✅ Salon créé : {VOICE_HUB_CHANNEL_NAME}"
+                report.append(f"✅ Salon créé : {VOICE_HUB_CHANNEL_NAME}")
             else:
-                hub_status = f"= Salon déjà présent : {VOICE_HUB_CHANNEL_NAME}"
+                report.append(f"= Salon déjà présent : {VOICE_HUB_CHANNEL_NAME}")
         except discord.Forbidden:
-            hub_status = f"❌ Salon refusé (permissions) : {VOICE_HUB_CHANNEL_NAME}"
+            report.append(f"❌ Salon refusé (permissions) : {VOICE_HUB_CHANNEL_NAME}")
 
-        embed = discord.Embed(
-            title="🎧 Configuration vocale",
-            description=(
-                f"{cat_status}\n{hub_status}\n\n"
-                f"Un membre qui rejoint **{VOICE_HUB_CHANNEL_NAME}** obtient aussitôt son propre "
-                "salon vocal personnel, avec un panneau de contrôle (renommer, limite, muet, exclure)."
-            ),
-            color=discord.Color(COLORS["saphir"]),
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        readonly_overwrites = {guild.default_role: discord.PermissionOverwrite(send_messages=False)}
+        info_channel = discord.utils.get(category.channels, name=VOICE_HUB_INFO_CHANNEL_NAME)
+        try:
+            if info_channel is None:
+                info_channel = await guild.create_text_channel(
+                    VOICE_HUB_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites, reason="Configuration vocal (Saphir)"
+                )
+                report.append(f"✅ Salon d'explication créé : {info_channel.mention}")
+            else:
+                await info_channel.edit(overwrites=readonly_overwrites, reason="Configuration vocal (Saphir)")
+                report.append(f"= Salon d'explication déjà présent : {info_channel.mention}")
+
+            already_posted = False
+            async for msg in info_channel.history(limit=10):
+                if msg.author.id == self.bot.user.id and msg.embeds and msg.embeds[0].footer.text == "Saphir · Hub vocal info":
+                    already_posted = True
+                    break
+            if not already_posted:
+                info_text = (
+                    f"🎧 **Salons vocaux personnels**\n\n"
+                    f"Rejoins **{VOICE_HUB_CHANNEL_NAME}** pour obtenir aussitôt ton propre salon vocal.\n\n"
+                    f"Un panneau de contrôle apparaît dans le salon :\n\n{CONTROL_PANEL_TEXT}\n\n"
+                    "Le salon disparaît automatiquement quand il se vide."
+                )
+                info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["saphir"]))
+                info_embed.set_footer(text="Saphir · Hub vocal info")
+                await info_channel.send(embed=info_embed)
+        except discord.Forbidden:
+            report.append(f"❌ Salon d'explication refusé (permissions) : {VOICE_HUB_INFO_CHANNEL_NAME}")
+
+        embed = discord.Embed(title="🎧 Configuration vocale", description="\n".join(report), color=discord.Color(COLORS["saphir"]))
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @setup_vocal.error
     async def setup_vocal_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):

@@ -23,6 +23,7 @@ VOICE_ROLE_NAME = "En vocal"
 # hub de salons vocaux temporaires
 VOICE_HUB_CATEGORY_NAME = "🎧 VOCAL"
 VOICE_HUB_CHANNEL_NAME = "➕ Créer un salon"
+VOICE_HUB_INFO_CHANNEL_NAME = "🎧・infos-vocal"
 
 # nom exact du salon-piège anti-bot : quiconque y écrit est expulsé
 HONEYPOT_CHANNEL_NAME = "🍯・ne-pas-écrire-ici"
@@ -52,6 +53,7 @@ LEVELS_DATA_FILE = "data/levels.json"
 LEVELS_CATEGORY_NAME = "📊 NIVEAUX"
 LEVEL_UP_CHANNEL_NAME = "🎉・niveaux"
 LEADERBOARD_CHANNEL_NAME = "🏆・classement"
+LEVELS_INFO_CHANNEL_NAME = "📊・infos-niveaux"
 LEADERBOARD_REFRESH_SECONDS = 300
 
 # paliers de rôles automatiques : (niveau requis, nom du rôle, couleur)
@@ -105,6 +107,9 @@ PERM_UNJAIL_ROLE_NAME = "「🜲・🔓 Perm Unjail」"
 # des piques qui rappellent un running gag précédent (continuité au lieu de vannes jetables)
 DOSSIER_DATA_FILE = "data/dossiers.json"
 DOSSIER_MAX_ENTRIES = 10  # entrées conservées par membre, les plus anciennes sont supprimées
+
+FUNCHAT_CATEGORY_NAME = "🤖 CHAT IA"
+FUNCHAT_INFO_CHANNEL_NAME = "🤖・infos-chat-ia"
 
 # lien compte Discord <-> tag Brawl Stars (voir cogs/brawlstars.py)
 BRAWLSTARS_LINKS_FILE = "data/brawlstars_links.json"

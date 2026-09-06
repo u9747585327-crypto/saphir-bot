@@ -5,10 +5,13 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from cogs._shared import handle_app_error
 from config import (
     COLORS,
     DOSSIER_DATA_FILE,
     DOSSIER_MAX_ENTRIES,
+    FUNCHAT_CATEGORY_NAME,
+    FUNCHAT_INFO_CHANNEL_NAME,
     FUNCHAT_MENTION_RESPONSES,
     HONEYPOT_CHANNEL_NAME,
 )
@@ -163,6 +166,59 @@ class FunChat(commands.Cog):
         if self.bot.user in message.mentions:
             await self._reply(message, FUNCHAT_MENTION_RESPONSES)
 
+    @app_commands.command(name="setup-chat-ia", description="Crée le salon d'information sur le chat IA de Saphir")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def setup_chat_ia(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        guild = interaction.guild
+        report = []
+
+        category = discord.utils.get(guild.categories, name=FUNCHAT_CATEGORY_NAME)
+        try:
+            if category is None:
+                category = await guild.create_category(FUNCHAT_CATEGORY_NAME, reason="Configuration chat IA (Saphir)")
+                report.append(f"✅ Catégorie créée : {FUNCHAT_CATEGORY_NAME}")
+            else:
+                report.append(f"= Catégorie déjà présente : {FUNCHAT_CATEGORY_NAME}")
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Permissions insuffisantes pour créer la catégorie.", ephemeral=True)
+            return
+
+        readonly_overwrites = {guild.default_role: discord.PermissionOverwrite(send_messages=False)}
+        info_channel = discord.utils.get(category.channels, name=FUNCHAT_INFO_CHANNEL_NAME)
+        try:
+            if info_channel is None:
+                info_channel = await guild.create_text_channel(
+                    FUNCHAT_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites, reason="Configuration chat IA (Saphir)"
+                )
+                report.append(f"✅ Salon créé : {info_channel.mention}")
+            else:
+                await info_channel.edit(overwrites=readonly_overwrites, reason="Configuration chat IA (Saphir)")
+                report.append(f"= Salon déjà présent : {info_channel.mention}")
+
+            already_posted = False
+            async for msg in info_channel.history(limit=10):
+                if msg.author.id == self.bot.user.id and msg.embeds and msg.embeds[0].footer.text == "Saphir · Chat IA info":
+                    already_posted = True
+                    break
+            if not already_posted:
+                info_text = (
+                    "🤖 **Chat IA**\n\n"
+                    f"Ping {self.bot.user.mention} dans n'importe quel salon pour qu'il te réponde — "
+                    "il garde le contexte des derniers messages du salon, donc il peut enchaîner sur "
+                    "ce qui vient d'être dit.\n\n"
+                    "Il tient aussi un « casier » par membre à partir de ses vannes précédentes, "
+                    "consultable via `/casier [membre]`."
+                )
+                info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["saphir"]))
+                info_embed.set_footer(text="Saphir · Chat IA info")
+                await info_channel.send(embed=info_embed)
+        except discord.Forbidden:
+            report.append(f"❌ Salon refusé (permissions) : {FUNCHAT_INFO_CHANNEL_NAME}")
+
+        embed = discord.Embed(title="🤖 Configuration chat IA", description="\n".join(report), color=discord.Color(COLORS["saphir"]))
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
     @app_commands.command(name="casier", description="Affiche le casier (running gag tenu par l'IA) d'un membre")
     @app_commands.describe(membre="Membre dont voir le casier (toi par défaut)")
     async def casier(self, interaction: discord.Interaction, membre: discord.Member = None):
@@ -178,9 +234,14 @@ class FunChat(commands.Cog):
         embed.set_footer(text="Alimenté automatiquement par le chat IA de Saphir")
         await interaction.response.send_message(embed=embed)
 
+    @setup_chat_ia.error
     @casier.error
-    async def casier_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        await interaction.response.send_message(f"Une erreur est survenue : {error}", ephemeral=True)
+    async def funchat_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        await handle_app_error(
+            interaction, error,
+            perm_message="Seul un administrateur peut utiliser cette commande.",
+            command_label="chat IA",
+        )
 
 
 async def setup(bot):

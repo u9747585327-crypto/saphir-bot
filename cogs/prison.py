@@ -190,7 +190,7 @@ class Prison(commands.Cog):
         text_channel = discord.utils.get(category.channels, name=PRISON_TEXT_CHANNEL)
         try:
             if text_channel is None:
-                await guild.create_text_channel(
+                text_channel = await guild.create_text_channel(
                     PRISON_TEXT_CHANNEL, category=category, overwrites=overwrites, reason="Configuration de la prison (Saphir)"
                 )
                 report.append(f"✅ Salon texte créé : {PRISON_TEXT_CHANNEL}")
@@ -199,6 +199,29 @@ class Prison(commands.Cog):
                 report.append(f"🔄 Salon texte mis à jour : {PRISON_TEXT_CHANNEL}")
         except discord.Forbidden:
             report.append(f"❌ Salon texte refusé (permissions) : {PRISON_TEXT_CHANNEL}")
+            text_channel = None
+
+        if text_channel is not None:
+            try:
+                already_pinned = any(
+                    msg.author.id == self.bot.user.id and msg.embeds and msg.embeds[0].footer.text == "Saphir · Alcatraz info"
+                    for msg in await text_channel.pins()
+                )
+                if not already_pinned:
+                    info_text = (
+                        "🔒 **Alcatraz**\n\n"
+                        "Un membre envoyé ici par un modérateur (`/jail`) perd temporairement tous ses "
+                        "rôles et ne peut communiquer que dans cette catégorie, pour la durée indiquée "
+                        "dans l'annonce. Ses rôles sont restaurés automatiquement à la fin de la peine "
+                        "(ou via `/unjail` pour une libération anticipée)."
+                    )
+                    info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["danger"]))
+                    info_embed.set_footer(text="Saphir · Alcatraz info")
+                    info_msg = await text_channel.send(embed=info_embed)
+                    await info_msg.pin(reason="Info Alcatraz (Saphir)")
+                    report.append("📌 Message d'explication épinglé")
+            except discord.HTTPException:
+                report.append("⚠️ Message d'explication non épinglé (permissions ou limite d'épingles)")
 
         voice_channel = discord.utils.get(category.channels, name=PRISON_VOICE_CHANNEL)
         try:

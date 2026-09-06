@@ -14,6 +14,7 @@ from config import (
     LEVEL_UP_CHANNEL_NAME,
     LEVELS_CATEGORY_NAME,
     LEVELS_DATA_FILE,
+    LEVELS_INFO_CHANNEL_NAME,
 )
 from cogs._shared import handle_app_error
 from storage import aload_json, asave_json
@@ -260,6 +261,44 @@ class Leveling(commands.Cog):
                 level_role_ids[str(threshold)] = role.id
             except discord.Forbidden:
                 report.append(f"❌ Rôle refusé (permissions) : {name}")
+
+        # 2.5. salon d'explication (paliers + commandes), posté une seule fois
+        info_channel = discord.utils.get(guild.text_channels, name=LEVELS_INFO_CHANNEL_NAME)
+        try:
+            if info_channel is None:
+                info_channel = await guild.create_text_channel(
+                    LEVELS_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites, reason="Configuration niveaux (Saphir)"
+                )
+                report.append(f"✅ Salon d'explication créé : {info_channel.mention}")
+            else:
+                if info_channel.category != category:
+                    await info_channel.edit(category=category, reason="Configuration niveaux (Saphir)")
+                await info_channel.edit(overwrites=readonly_overwrites, reason="Configuration niveaux (Saphir)")
+                report.append(f"= Salon d'explication déjà présent : {info_channel.mention}")
+
+            already_posted = False
+            async for msg in info_channel.history(limit=10):
+                if msg.author.id == self.bot.user.id and msg.embeds and msg.embeds[0].footer.text == "Saphir · Niveaux info":
+                    already_posted = True
+                    break
+            if not already_posted:
+                palier_lines = []
+                for threshold, name, _color in LEVEL_ROLES:
+                    role = guild.get_role(level_role_ids.get(str(threshold), 0))
+                    palier_lines.append(f"• Niveau **{threshold}** — {role.mention if role else name}")
+                info_text = (
+                    "📊 **Système de niveaux**\n\n"
+                    "Tu gagnes de l'XP en écrivant des messages (léger délai anti-spam entre deux gains) "
+                    "et en restant en vocal avec au moins une autre personne (hors salon AFK). Chaque "
+                    "niveau débloque un rôle, qui s'ajoute aux précédents :\n\n"
+                    + "\n".join(palier_lines)
+                    + "\n\n`/niveau [membre]` pour voir une progression, `/classement` pour le classement du serveur."
+                )
+                info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["saphir"]))
+                info_embed.set_footer(text="Saphir · Niveaux info")
+                await info_channel.send(embed=info_embed)
+        except discord.Forbidden:
+            report.append(f"❌ Salon d'explication refusé (permissions) : {LEVELS_INFO_CHANNEL_NAME}")
 
         # 3. salon de classement en direct
         lb_channel = guild.get_channel(guild_settings.get("leaderboard_channel_id", 0))
