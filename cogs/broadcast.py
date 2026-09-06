@@ -131,6 +131,9 @@ class Broadcast(commands.Cog):
     @app_commands.describe(membre="Membre à contacter", message="Contenu du message à envoyer")
     @app_commands.checks.has_permissions(administrator=True)
     async def mp_membre(self, interaction: discord.Interaction, membre: discord.Member, message: str):
+        if membre.bot:
+            await interaction.response.send_message("On ne peut pas envoyer de MP à un bot.", ephemeral=True)
+            return
         await _send_broadcast(interaction, [membre], message, membre.mention)
 
     @mp_tous.error
