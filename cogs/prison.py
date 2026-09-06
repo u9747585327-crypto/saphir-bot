@@ -13,6 +13,7 @@ from config import (
     PRISON_CATEGORY_NAME,
     PRISON_DATA_FILE,
     PRISON_INFO_CHANNEL_NAME,
+    PRISON_SANCTIONS_CHANNEL_NAME,
     PRISON_TEXT_CHANNEL,
     PRISON_VOICE_CHANNEL,
 )
@@ -228,14 +229,31 @@ class Prison(commands.Cog):
                     "🔒 **Alcatraz**\n\n"
                     "Un membre envoyé ici par un modérateur (`/jail`) perd temporairement tous ses "
                     "rôles et ne peut communiquer que dans cette catégorie, pour la durée indiquée "
-                    "dans l'annonce. Ses rôles sont restaurés automatiquement à la fin de la peine "
-                    "(ou via `/unjail` pour une libération anticipée)."
+                    f"dans l'annonce (visible dans {PRISON_SANCTIONS_CHANNEL_NAME}). Ses rôles sont "
+                    "restaurés automatiquement à la fin de la peine (ou via `/unjail` pour une "
+                    "libération anticipée)."
                 )
                 info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["danger"]))
                 info_embed.set_footer(text="Saphir · Alcatraz info")
                 await info_channel.send(embed=info_embed)
         except discord.Forbidden:
             report.append(f"❌ Salon d'explication refusé (permissions) : {PRISON_INFO_CHANNEL_NAME}")
+
+        # salon d'historique des sanctions, en lecture seule — séparé de la cellule pour
+        # garder un journal propre des jail/liberations sans le mélanger aux messages des
+        # membres exilés (qui, eux, peuvent écrire dans la cellule)
+        sanctions_channel = discord.utils.get(category.channels, name=PRISON_SANCTIONS_CHANNEL_NAME)
+        try:
+            if sanctions_channel is None:
+                sanctions_channel = await guild.create_text_channel(
+                    PRISON_SANCTIONS_CHANNEL_NAME, category=category, overwrites=info_overwrites, reason="Configuration de la prison (Saphir)"
+                )
+                report.append(f"✅ Salon d'historique créé : {sanctions_channel.mention}")
+            else:
+                await sanctions_channel.edit(overwrites=info_overwrites, reason="Configuration de la prison (Saphir)")
+                report.append(f"= Salon d'historique déjà présent : {sanctions_channel.mention}")
+        except discord.Forbidden:
+            report.append(f"❌ Salon d'historique refusé (permissions) : {PRISON_SANCTIONS_CHANNEL_NAME}")
 
         voice_channel = discord.utils.get(category.channels, name=PRISON_VOICE_CHANNEL)
         try:
@@ -298,7 +316,7 @@ class Prison(commands.Cog):
     # ------------------------------------------------------------------ #
 
     async def _announce(self, guild: discord.Guild, embed: discord.Embed):
-        channel = discord.utils.get(guild.text_channels, name=PRISON_TEXT_CHANNEL)
+        channel = discord.utils.get(guild.text_channels, name=PRISON_SANCTIONS_CHANNEL_NAME)
         if channel:
             try:
                 return await channel.send(embed=embed)

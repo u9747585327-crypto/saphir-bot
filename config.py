@@ -33,6 +33,7 @@ PRISON_CATEGORY_NAME = "🔒 ALCATRAZ"
 PRISON_TEXT_CHANNEL = "🔒・cellule"
 PRISON_VOICE_CHANNEL = "🔒 Isolement"
 PRISON_INFO_CHANNEL_NAME = "🔒・infos-alcatraz"
+PRISON_SANCTIONS_CHANNEL_NAME = "🔒・sanctions"
 EXILE_ROLE_NAME = "⛓️ Exilé"
 PRISON_DATA_FILE = "data/prison.json"
 
