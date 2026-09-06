@@ -13,6 +13,7 @@ from config import (
     BRAWLSTARS_LINKS_FILE,
     COLORS,
 )
+from services.setup_kit import ensure_category, ensure_text_channel, post_once, readonly_overwrites
 from storage import aload_json, asave_json
 
 INFO_TEXT = (
@@ -44,6 +45,25 @@ VALID_TAG_CHARS = set("0289PYLQGRJCUV")
 
 def is_configured() -> bool:
     return bool(_API_KEY)
+
+
+async def run_setup(bot, guild: discord.Guild) -> list:
+    """Logique de /setup-brawlstars, appelable aussi par /setup-tout."""
+    report = []
+    category, line = await ensure_category(guild, BRAWLSTARS_CATEGORY_NAME)
+    report.append(line)
+    if category is None:
+        return report
+
+    channel, line = await ensure_text_channel(
+        guild, BRAWLSTARS_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites(guild)
+    )
+    report.append(line)
+
+    info_embed = discord.Embed(description=INFO_TEXT, color=discord.Color(COLORS["gold"]))
+    if await post_once(channel, bot.user.id, info_embed, "Saphir · Brawl Stars info"):
+        report.append("📝 Message d'explication posté")
+    return report
 
 
 def _normalize_tag(raw: str) -> str:
@@ -277,45 +297,7 @@ class BrawlStars(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_brawlstars(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True, ephemeral=True)
-        guild = interaction.guild
-        report = []
-
-        category = discord.utils.get(guild.categories, name=BRAWLSTARS_CATEGORY_NAME)
-        try:
-            if category is None:
-                category = await guild.create_category(BRAWLSTARS_CATEGORY_NAME, reason="Configuration Brawl Stars (Saphir)")
-                report.append(f"✅ Catégorie créée : {BRAWLSTARS_CATEGORY_NAME}")
-            else:
-                report.append(f"= Catégorie déjà présente : {BRAWLSTARS_CATEGORY_NAME}")
-        except discord.Forbidden:
-            await interaction.followup.send("❌ Permissions insuffisantes pour créer la catégorie.", ephemeral=True)
-            return
-
-        readonly_overwrites = {guild.default_role: discord.PermissionOverwrite(send_messages=False)}
-        info_channel = discord.utils.get(category.channels, name=BRAWLSTARS_INFO_CHANNEL_NAME)
-        try:
-            if info_channel is None:
-                info_channel = await guild.create_text_channel(
-                    BRAWLSTARS_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites,
-                    reason="Configuration Brawl Stars (Saphir)",
-                )
-                report.append(f"✅ Salon créé : {info_channel.mention}")
-            else:
-                await info_channel.edit(overwrites=readonly_overwrites, reason="Configuration Brawl Stars (Saphir)")
-                report.append(f"= Salon déjà présent : {info_channel.mention}")
-
-            already_posted = False
-            async for msg in info_channel.history(limit=10):
-                if msg.author.id == self.bot.user.id and msg.embeds and msg.embeds[0].footer.text == "Saphir · Brawl Stars info":
-                    already_posted = True
-                    break
-            if not already_posted:
-                info_embed = discord.Embed(description=INFO_TEXT, color=discord.Color(COLORS["gold"]))
-                info_embed.set_footer(text="Saphir · Brawl Stars info")
-                await info_channel.send(embed=info_embed)
-        except discord.Forbidden:
-            report.append(f"❌ Salon refusé (permissions) : {BRAWLSTARS_INFO_CHANNEL_NAME}")
-
+        report = await run_setup(self.bot, interaction.guild)
         embed = discord.Embed(
             title="🎮 Configuration Brawl Stars", description="\n".join(report), color=discord.Color(COLORS["saphir"])
         )

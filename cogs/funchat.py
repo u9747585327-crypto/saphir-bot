@@ -15,6 +15,7 @@ from config import (
     FUNCHAT_MENTION_RESPONSES,
     HONEYPOT_CHANNEL_NAME,
 )
+from services.setup_kit import ensure_category, ensure_text_channel, post_once, readonly_overwrites
 from storage import aload_json, asave_json
 
 # --- IA Groq (gratuite, palier très généreux : 14 400 requêtes/jour) avec repli
@@ -67,6 +68,32 @@ if _GROQ_API_KEY:
 
 def is_ai_enabled() -> bool:
     return _groq_client is not None
+
+
+async def run_setup(bot, guild: discord.Guild) -> list:
+    """Logique de /setup-chat-ia, appelable aussi par /setup-tout."""
+    report = []
+    category, line = await ensure_category(guild, FUNCHAT_CATEGORY_NAME)
+    report.append(line)
+    if category is None:
+        return report
+
+    channel, line = await ensure_text_channel(
+        guild, FUNCHAT_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites(guild)
+    )
+    report.append(line)
+
+    info_text = (
+        "🤖 **Chat IA**\n\n"
+        f"Ping {bot.user.mention} dans n'importe quel salon pour qu'il te réponde — il garde le "
+        "contexte des derniers messages du salon, donc il peut enchaîner sur ce qui vient d'être dit.\n\n"
+        "Il tient aussi un « casier » par membre à partir de ses vannes précédentes, "
+        "consultable via `/casier [membre]`."
+    )
+    info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["saphir"]))
+    if await post_once(channel, bot.user.id, info_embed, "Saphir · Chat IA info"):
+        report.append("📝 Message d'explication posté")
+    return report
 
 
 async def _get_dossier(guild_id: int, user_id: int) -> list:
@@ -170,52 +197,7 @@ class FunChat(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_chat_ia(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True, ephemeral=True)
-        guild = interaction.guild
-        report = []
-
-        category = discord.utils.get(guild.categories, name=FUNCHAT_CATEGORY_NAME)
-        try:
-            if category is None:
-                category = await guild.create_category(FUNCHAT_CATEGORY_NAME, reason="Configuration chat IA (Saphir)")
-                report.append(f"✅ Catégorie créée : {FUNCHAT_CATEGORY_NAME}")
-            else:
-                report.append(f"= Catégorie déjà présente : {FUNCHAT_CATEGORY_NAME}")
-        except discord.Forbidden:
-            await interaction.followup.send("❌ Permissions insuffisantes pour créer la catégorie.", ephemeral=True)
-            return
-
-        readonly_overwrites = {guild.default_role: discord.PermissionOverwrite(send_messages=False)}
-        info_channel = discord.utils.get(category.channels, name=FUNCHAT_INFO_CHANNEL_NAME)
-        try:
-            if info_channel is None:
-                info_channel = await guild.create_text_channel(
-                    FUNCHAT_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites, reason="Configuration chat IA (Saphir)"
-                )
-                report.append(f"✅ Salon créé : {info_channel.mention}")
-            else:
-                await info_channel.edit(overwrites=readonly_overwrites, reason="Configuration chat IA (Saphir)")
-                report.append(f"= Salon déjà présent : {info_channel.mention}")
-
-            already_posted = False
-            async for msg in info_channel.history(limit=10):
-                if msg.author.id == self.bot.user.id and msg.embeds and msg.embeds[0].footer.text == "Saphir · Chat IA info":
-                    already_posted = True
-                    break
-            if not already_posted:
-                info_text = (
-                    "🤖 **Chat IA**\n\n"
-                    f"Ping {self.bot.user.mention} dans n'importe quel salon pour qu'il te réponde — "
-                    "il garde le contexte des derniers messages du salon, donc il peut enchaîner sur "
-                    "ce qui vient d'être dit.\n\n"
-                    "Il tient aussi un « casier » par membre à partir de ses vannes précédentes, "
-                    "consultable via `/casier [membre]`."
-                )
-                info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["saphir"]))
-                info_embed.set_footer(text="Saphir · Chat IA info")
-                await info_channel.send(embed=info_embed)
-        except discord.Forbidden:
-            report.append(f"❌ Salon refusé (permissions) : {FUNCHAT_INFO_CHANNEL_NAME}")
-
+        report = await run_setup(self.bot, interaction.guild)
         embed = discord.Embed(title="🤖 Configuration chat IA", description="\n".join(report), color=discord.Color(COLORS["saphir"]))
         await interaction.followup.send(embed=embed, ephemeral=True)
 

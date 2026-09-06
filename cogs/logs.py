@@ -5,6 +5,25 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import COLORS, LOG_CHANNELS, LOGS_CATEGORY_NAME
+from services.setup_kit import ensure_category, ensure_text_channel, hidden_overwrites
+
+
+async def run_setup(bot, guild: discord.Guild) -> list:
+    """Logique de /setup-logs, appelable aussi par /setup-tout."""
+    report = []
+    overwrites = hidden_overwrites(guild)  # invisible pour les membres
+
+    category, line = await ensure_category(guild, LOGS_CATEGORY_NAME, overwrites=overwrites)
+    report.append(line)
+    if category is None:
+        return report
+
+    for channel_name in LOG_CHANNELS.values():
+        _channel, line = await ensure_text_channel(
+            guild, channel_name, category=category, overwrites=overwrites
+        )
+        report.append(line)
+    return report
 
 
 def _trim(text: str, limit: int = 1000) -> str:
@@ -29,39 +48,7 @@ class Logs(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_logs(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True, ephemeral=True)
-        guild = interaction.guild
-        report = []
-
-        overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False)}
-
-        category = discord.utils.get(guild.categories, name=LOGS_CATEGORY_NAME)
-        try:
-            if category is None:
-                category = await guild.create_category(
-                    LOGS_CATEGORY_NAME, overwrites=overwrites, reason="Configuration des logs (Saphir)"
-                )
-                report.append(f"✅ Catégorie créée : {LOGS_CATEGORY_NAME}")
-            else:
-                await category.edit(overwrites=overwrites, reason="Configuration des logs (Saphir)")
-                report.append(f"🔄 Catégorie mise à jour : {LOGS_CATEGORY_NAME}")
-        except discord.Forbidden:
-            await interaction.followup.send("❌ Permissions insuffisantes pour créer la catégorie.", ephemeral=True)
-            return
-
-        for channel_name in LOG_CHANNELS.values():
-            channel = discord.utils.get(category.channels, name=channel_name)
-            try:
-                if channel is None:
-                    await guild.create_text_channel(
-                        channel_name, category=category, overwrites=overwrites, reason="Configuration des logs (Saphir)"
-                    )
-                    report.append(f"✅ Salon créé : {channel_name}")
-                else:
-                    await channel.edit(overwrites=overwrites, reason="Configuration des logs (Saphir)")
-                    report.append(f"🔄 Salon mis à jour : {channel_name}")
-            except discord.Forbidden:
-                report.append(f"❌ Salon refusé (permissions) : {channel_name}")
-
+        report = await run_setup(self.bot, interaction.guild)
         embed = discord.Embed(
             title="📋 Configuration des logs",
             description="\n".join(report),

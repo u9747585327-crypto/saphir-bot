@@ -4,6 +4,29 @@ from discord.ext import commands
 
 from cogs._shared import handle_app_error
 from config import HONEYPOT_CHANNEL_NAME, COLORS
+from services.setup_kit import ensure_text_channel, post_once
+
+
+async def run_setup(bot, guild: discord.Guild) -> list:
+    """Logique de /setup-honeypot, appelable aussi par /setup-tout."""
+    report = []
+    overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=True)}
+    channel, line = await ensure_text_channel(guild, HONEYPOT_CHANNEL_NAME, overwrites=overwrites)
+    report.append(line)
+
+    info_embed = discord.Embed(
+        title="🍯 Piège anti-bot",
+        description=(
+            "Ce salon sert à repérer les **bots** et comptes automatisés qui postent partout sans "
+            "distinction sur le serveur (raids, spam).\n\n"
+            "**N'écris jamais ici, même par curiosité** — tout message posté, humain ou bot, "
+            "entraîne une expulsion immédiate du serveur."
+        ),
+        color=discord.Color(COLORS["gold"]),
+    )
+    if await post_once(channel, bot.user.id, info_embed, "Saphir · Honeypot info"):
+        report.append("📝 Message d'avertissement posté")
+    return report
 
 
 def build_honeypot_embed(member: discord.Member) -> discord.Embed:
@@ -30,59 +53,14 @@ class Honeypot(commands.Cog):
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_honeypot(self, interaction: discord.Interaction):
-        guild = interaction.guild
-        channel = discord.utils.get(guild.text_channels, name=HONEYPOT_CHANNEL_NAME)
-
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-        }
-
-        try:
-            if channel is None:
-                channel = await guild.create_text_channel(
-                    HONEYPOT_CHANNEL_NAME, overwrites=overwrites, reason="Configuration honeypot (Saphir)"
-                )
-                status = f"✅ Salon créé : {channel.mention}"
-            else:
-                await channel.edit(overwrites=overwrites, reason="Configuration honeypot (Saphir)")
-                status = f"🔄 Salon déjà présent, permissions vérifiées : {channel.mention}"
-        except discord.Forbidden:
-            await interaction.response.send_message("❌ Permissions insuffisantes pour créer le salon.", ephemeral=True)
-            return
-
-        already_posted = False
-        async for msg in channel.history(limit=10):
-            if msg.author.id == self.bot.user.id and msg.embeds and msg.embeds[0].footer.text == "Saphir · Honeypot info":
-                already_posted = True
-                break
-
-        if not already_posted:
-            info_embed = discord.Embed(
-                title="🍯 Piège anti-bot",
-                description=(
-                    "Ce salon sert à repérer les **bots** et comptes automatisés qui postent partout sans distinction "
-                    "sur le serveur (raids, spam).\n\n"
-                    "**N'écris jamais ici, même par curiosité** — tout message posté, humain ou bot, "
-                    "entraîne une expulsion immédiate du serveur."
-                ),
-                color=discord.Color(COLORS["gold"]),
-            )
-            info_embed.set_footer(text="Saphir · Honeypot info")
-            try:
-                await channel.send(embed=info_embed)
-            except discord.HTTPException:
-                pass
-
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        report = await run_setup(self.bot, interaction.guild)
         embed = discord.Embed(
             title="🍯 Configuration du honeypot",
-            description=(
-                f"{status}\n\n"
-                "N'importe quel message envoyé dans ce salon (par un humain ou un bot) "
-                "entraîne la suppression du message et l'expulsion de son auteur."
-            ),
+            description="\n".join(report),
             color=discord.Color(COLORS["saphir"]),
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @setup_honeypot.error
     async def setup_honeypot_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):

@@ -14,6 +14,7 @@ from config import (
     OSINT_ROLE_NAME,
     OSINT_USAGE_FILE,
 )
+from services.setup_kit import ensure_category, ensure_text_channel, hidden_overwrites, post_once, readonly_overwrites
 from storage import load_json, save_json
 
 PUBLIC_FLAG_LABELS = {
@@ -57,6 +58,34 @@ class Osint(commands.Cog):
     #  Setup
     # ------------------------------------------------------------------ #
 
+    async def run_setup(self, guild: discord.Guild) -> list:
+        """Logique de /setup-osint, appelable aussi par /setup-tout."""
+        report = []
+
+        role = discord.utils.get(guild.roles, name=OSINT_ROLE_NAME)
+        if role is None:
+            report.append(f"⚠️ Le rôle `{OSINT_ROLE_NAME}` n'existe pas encore — lance `/setup-niveaux` d'abord.")
+
+        category, line = await ensure_category(guild, OSINT_CATEGORY_NAME)
+        report.append(line)
+        if category is None:
+            return report
+
+        info_channel, line = await ensure_text_channel(
+            guild, OSINT_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites(guild)
+        )
+        report.append(line)
+
+        info_embed = discord.Embed(description=INFO_TEXT, color=discord.Color(COLORS["saphir"]))
+        if await post_once(info_channel, self.bot.user.id, info_embed, "Saphir · OSINT info"):
+            report.append("📝 Message d'explication posté")
+
+        _command_channel, line = await ensure_text_channel(
+            guild, OSINT_COMMAND_CHANNEL_NAME, category=category, overwrites=hidden_overwrites(guild, role)
+        )
+        report.append(line)
+        return report
+
     @app_commands.command(
         name="setup-osint",
         description="Crée la catégorie de recherche de profil Discord (salon explicatif + salon de commande)",
@@ -64,65 +93,7 @@ class Osint(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_osint(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True, ephemeral=True)
-        guild = interaction.guild
-        report = []
-
-        role = discord.utils.get(guild.roles, name=OSINT_ROLE_NAME)
-        if role is None:
-            report.append(f"⚠️ Le rôle `{OSINT_ROLE_NAME}` n'existe pas encore — lance `/setup-niveaux` d'abord.")
-
-        category = discord.utils.get(guild.categories, name=OSINT_CATEGORY_NAME)
-        try:
-            if category is None:
-                category = await guild.create_category(OSINT_CATEGORY_NAME, reason="Configuration OSINT (Saphir)")
-                report.append(f"✅ Catégorie créée : {OSINT_CATEGORY_NAME}")
-            else:
-                report.append(f"= Catégorie déjà présente : {OSINT_CATEGORY_NAME}")
-        except discord.Forbidden:
-            await interaction.followup.send("❌ Permissions insuffisantes pour créer la catégorie.", ephemeral=True)
-            return
-
-        readonly_overwrites = {guild.default_role: discord.PermissionOverwrite(send_messages=False)}
-        info_channel = discord.utils.get(category.channels, name=OSINT_INFO_CHANNEL_NAME)
-        try:
-            if info_channel is None:
-                info_channel = await guild.create_text_channel(
-                    OSINT_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites, reason="Configuration OSINT (Saphir)"
-                )
-                report.append(f"✅ Salon créé : {OSINT_INFO_CHANNEL_NAME}")
-            else:
-                await info_channel.edit(overwrites=readonly_overwrites, reason="Configuration OSINT (Saphir)")
-                report.append(f"= Salon déjà présent : {OSINT_INFO_CHANNEL_NAME}")
-
-            already_posted = False
-            async for msg in info_channel.history(limit=10):
-                if msg.author.id == self.bot.user.id and msg.embeds and msg.embeds[0].footer.text == "Saphir · OSINT info":
-                    already_posted = True
-                    break
-            if not already_posted:
-                info_embed = discord.Embed(description=INFO_TEXT, color=discord.Color(COLORS["saphir"]))
-                info_embed.set_footer(text="Saphir · OSINT info")
-                await info_channel.send(embed=info_embed)
-        except discord.Forbidden:
-            report.append(f"❌ Salon refusé (permissions) : {OSINT_INFO_CHANNEL_NAME}")
-
-        command_overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False)}
-        if role:
-            command_overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
-
-        command_channel = discord.utils.get(category.channels, name=OSINT_COMMAND_CHANNEL_NAME)
-        try:
-            if command_channel is None:
-                command_channel = await guild.create_text_channel(
-                    OSINT_COMMAND_CHANNEL_NAME, category=category, overwrites=command_overwrites, reason="Configuration OSINT (Saphir)"
-                )
-                report.append(f"✅ Salon créé : {OSINT_COMMAND_CHANNEL_NAME} (réservé au rôle {OSINT_ROLE_NAME})")
-            else:
-                await command_channel.edit(overwrites=command_overwrites, reason="Configuration OSINT (Saphir)")
-                report.append(f"= Salon déjà présent : {OSINT_COMMAND_CHANNEL_NAME}")
-        except discord.Forbidden:
-            report.append(f"❌ Salon refusé (permissions) : {OSINT_COMMAND_CHANNEL_NAME}")
-
+        report = await self.run_setup(interaction.guild)
         embed = discord.Embed(title="🔍 Configuration OSINT", description="\n".join(report), color=discord.Color(COLORS["saphir"]))
         await interaction.followup.send(embed=embed, ephemeral=True)
 

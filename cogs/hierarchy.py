@@ -9,6 +9,7 @@ from config import (
     ADMIN_COMMAND_CHANNEL_NAME,
     ADMIN_INFO_CHANNEL_NAME,
     COLORS,
+    GUILD_SETTINGS_FILE,
     HIERARCHY_ROLES,
     LOGS_CATEGORY_NAME,
     PERM_JAIL_ROLE_NAME,
@@ -16,6 +17,8 @@ from config import (
     PRISON_CATEGORY_NAME,
     STAFF_ROLE_NAMES,
 )
+from services.setup_kit import ensure_category, ensure_text_channel, post_once, readonly_overwrites
+from storage import aload_json, asave_json
 
 # libellés lisibles pour les clés de permission utilisées dans HIERARCHY_ROLES,
 # affichés dans le salon d'explication créé par /setup-administration
@@ -138,14 +141,32 @@ class Hierarchy(commands.Cog):
             category = discord.utils.get(guild.categories, name=category_name)
             if category is None or not staff_roles:
                 continue
+            refused = 0
             for role in staff_roles:
                 try:
                     await category.set_permissions(role, view_channel=True, reason="Accès staff (Saphir)")
                 except discord.Forbidden:
-                    pass
-            report.append(f"🔑 Accès staff appliqué sur {category_name}")
+                    refused += 1
+            if refused:
+                report.append(f"⚠️ Accès staff refusé sur {category_name} ({refused} rôle(s), permissions du bot)")
+            else:
+                report.append(f"🔑 Accès staff appliqué sur {category_name}")
+
+        # 5. enregistre le rôle Membre comme rôle automatique à l'arrivée. Sans ça,
+        # autorole.py cherchait un rôle nommé littéralement "Membre" et ne trouvait
+        # jamais le rôle stylé 「🜲・✨ 𝗠𝗲𝗺𝗯𝗿𝗲」 : l'attribution auto ne marchait pas.
+        member_role = created_roles.get(HIERARCHY_ROLES[-1][0])
+        if member_role:
+            settings = await aload_json(GUILD_SETTINGS_FILE, {})
+            settings.setdefault(str(guild.id), {})["auto_role_id"] = member_role.id
+            await asave_json(GUILD_SETTINGS_FILE, settings)
+            report.append(f"🧩 Rôle donné automatiquement à l'arrivée : {member_role.name}")
 
         return report
+
+    async def run_setup(self, guild: discord.Guild) -> list:
+        """Logique de /setup-roles, sous le nom commun attendu par /setup-tout."""
+        return await self._configure_roles(guild)
 
     @app_commands.command(
         name="setup-roles",
@@ -171,6 +192,52 @@ class Hierarchy(commands.Cog):
             command_label="setup-roles",
         )
 
+    async def run_setup_administration(self, guild: discord.Guild) -> list:
+        """Logique de /setup-administration, appelable aussi par /setup-tout."""
+        report = []
+
+        # tout rang au-dessus de Membre (dernier élément de HIERARCHY_ROLES) est considéré staff ici
+        staff_role_names = [name for name, *_ in HIERARCHY_ROLES[:-1]]
+        staff_roles = [r for n in staff_role_names if (r := discord.utils.get(guild.roles, name=n))]
+
+        category, line = await ensure_category(guild, ADMIN_CATEGORY_NAME)
+        report.append(line)
+        if category is None:
+            return report
+
+        # salon de commandes, réservé au staff (masqué pour tout le monde d'autre)
+        command_overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False)}
+        for role in staff_roles:
+            command_overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
+
+        _command_channel, line = await ensure_text_channel(
+            guild, ADMIN_COMMAND_CHANNEL_NAME, category=category, overwrites=command_overwrites
+        )
+        report.append(line)
+
+        # salon d'explication des rôles, visible par tout le monde (lecture seule)
+        info_channel, line = await ensure_text_channel(
+            guild, ADMIN_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites(guild)
+        )
+        report.append(line)
+
+        role_blocks = []
+        for name, _color, perms in HIERARCHY_ROLES:
+            role = discord.utils.get(guild.roles, name=name)
+            label = role.mention if role else name
+            perm_text = ", ".join(PERM_LABELS.get(p, p) for p in perms) if perms else "Aucune permission spéciale"
+            role_blocks.append(f"**{label}**\n{perm_text}")
+        info_embed = discord.Embed(
+            title="🛠️ Récapitulatif — rôles & commandes",
+            description="🛠️ **Hiérarchie des rôles**\n\n" + "\n\n".join(role_blocks),
+            color=discord.Color(COLORS["saphir"]),
+        )
+        for title, value in build_command_fields(self.bot, guild):
+            info_embed.add_field(name=title, value=value, inline=False)
+        if await post_once(info_channel, self.bot.user.id, info_embed, "Saphir · Administration info"):
+            report.append("📝 Récapitulatif posté")
+        return report
+
     @app_commands.command(
         name="setup-administration",
         description="Crée le hub d'administration : salon de commandes staff + salon expliquant la hiérarchie",
@@ -178,80 +245,7 @@ class Hierarchy(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_administration(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True, ephemeral=True)
-        guild = interaction.guild
-        report = []
-
-        # tout rang au-dessus de Membre (dernier élément de HIERARCHY_ROLES) est considéré staff ici
-        staff_role_names = [name for name, *_ in HIERARCHY_ROLES[:-1]]
-        staff_roles = [r for n in staff_role_names if (r := discord.utils.get(guild.roles, name=n))]
-
-        category = discord.utils.get(guild.categories, name=ADMIN_CATEGORY_NAME)
-        try:
-            if category is None:
-                category = await guild.create_category(ADMIN_CATEGORY_NAME, reason="Configuration administration (Saphir)")
-                report.append(f"✅ Catégorie créée : {ADMIN_CATEGORY_NAME}")
-            else:
-                report.append(f"= Catégorie déjà présente : {ADMIN_CATEGORY_NAME}")
-        except discord.Forbidden:
-            await interaction.followup.send("❌ Permissions insuffisantes pour créer la catégorie.", ephemeral=True)
-            return
-
-        # salon de commandes, réservé au staff (masqué pour tout le monde d'autre)
-        command_overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False)}
-        for role in staff_roles:
-            command_overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
-
-        command_channel = discord.utils.get(category.channels, name=ADMIN_COMMAND_CHANNEL_NAME)
-        try:
-            if command_channel is None:
-                command_channel = await guild.create_text_channel(
-                    ADMIN_COMMAND_CHANNEL_NAME, category=category, overwrites=command_overwrites, reason="Configuration administration (Saphir)"
-                )
-                report.append(f"✅ Salon créé : {ADMIN_COMMAND_CHANNEL_NAME}")
-            else:
-                await command_channel.edit(overwrites=command_overwrites, reason="Configuration administration (Saphir)")
-                report.append(f"= Salon déjà présent : {ADMIN_COMMAND_CHANNEL_NAME}")
-        except discord.Forbidden:
-            report.append(f"❌ Salon refusé (permissions) : {ADMIN_COMMAND_CHANNEL_NAME}")
-
-        # salon d'explication des rôles, visible par tout le monde (lecture seule)
-        info_overwrites = {guild.default_role: discord.PermissionOverwrite(send_messages=False)}
-        info_channel = discord.utils.get(category.channels, name=ADMIN_INFO_CHANNEL_NAME)
-        try:
-            if info_channel is None:
-                info_channel = await guild.create_text_channel(
-                    ADMIN_INFO_CHANNEL_NAME, category=category, overwrites=info_overwrites, reason="Configuration administration (Saphir)"
-                )
-                report.append(f"✅ Salon créé : {info_channel.mention}")
-            else:
-                await info_channel.edit(overwrites=info_overwrites, reason="Configuration administration (Saphir)")
-                report.append(f"= Salon déjà présent : {info_channel.mention}")
-
-            already_posted = False
-            async for msg in info_channel.history(limit=10):
-                if msg.author.id == self.bot.user.id and msg.embeds and msg.embeds[0].footer.text == "Saphir · Administration info":
-                    already_posted = True
-                    break
-            if not already_posted:
-                role_blocks = []
-                for name, _color, perms in HIERARCHY_ROLES:
-                    role = discord.utils.get(guild.roles, name=name)
-                    label = role.mention if role else name
-                    perm_text = ", ".join(PERM_LABELS.get(p, p) for p in perms) if perms else "Aucune permission spéciale"
-                    role_blocks.append(f"**{label}**\n{perm_text}")
-                info_text = "🛠️ **Hiérarchie des rôles**\n\n" + "\n\n".join(role_blocks)
-                info_embed = discord.Embed(
-                    title="🛠️ Récapitulatif — rôles & commandes",
-                    description=info_text,
-                    color=discord.Color(COLORS["saphir"]),
-                )
-                for title, value in build_command_fields(self.bot, guild):
-                    info_embed.add_field(name=title, value=value, inline=False)
-                info_embed.set_footer(text="Saphir · Administration info")
-                await info_channel.send(embed=info_embed)
-        except discord.Forbidden:
-            report.append(f"❌ Salon refusé (permissions) : {ADMIN_INFO_CHANNEL_NAME}")
-
+        report = await self.run_setup_administration(interaction.guild)
         embed = discord.Embed(
             title="🛠️ Configuration administration", description="\n".join(report), color=discord.Color(COLORS["saphir"])
         )

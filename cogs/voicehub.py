@@ -5,7 +5,21 @@ from discord import app_commands
 from discord.ext import commands
 
 from cogs._shared import handle_app_error
-from config import VOICE_HUB_CATEGORY_NAME, VOICE_HUB_CHANNEL_NAME, VOICE_HUB_INFO_CHANNEL_NAME, COLORS
+from services.setup_kit import (
+    ensure_category,
+    ensure_role,
+    ensure_text_channel,
+    ensure_voice_channel,
+    post_once,
+    readonly_overwrites,
+)
+from config import (
+    COLORS,
+    VOICE_HUB_CATEGORY_NAME,
+    VOICE_HUB_CHANNEL_NAME,
+    VOICE_HUB_INFO_CHANNEL_NAME,
+    VOICE_ROLE_NAME,
+)
 
 # anti-spam : délai minimal entre deux créations de salon perso par le même membre
 SPAWN_COOLDOWN_SECONDS = 15
@@ -16,6 +30,40 @@ CONTROL_PANEL_TEXT = (
     "🔇 **Muet** — rend un membre muet dans le salon\n"
     "⛔ **Exclure** — déconnecte et bloque un membre"
 )
+
+
+async def run_setup(bot, guild: discord.Guild) -> list:
+    """Logique de /setup-vocal, appelable aussi par /setup-tout."""
+    report = []
+
+    # role donne pendant qu'un membre est en vocal (cogs/voicerole.py) : personne ne le
+    # creait jusqu'ici, donc la feature ne faisait rien du tout
+    _role, line = await ensure_role(guild, VOICE_ROLE_NAME)
+    report.append(line)
+
+    category, line = await ensure_category(guild, VOICE_HUB_CATEGORY_NAME)
+    report.append(line)
+    if category is None:
+        return report
+
+    _hub, line = await ensure_voice_channel(guild, VOICE_HUB_CHANNEL_NAME, category=category)
+    report.append(line)
+
+    info_channel, line = await ensure_text_channel(
+        guild, VOICE_HUB_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites(guild)
+    )
+    report.append(line)
+
+    info_text = (
+        "🎧 **Salons vocaux personnels**\n\n"
+        f"Rejoins **{VOICE_HUB_CHANNEL_NAME}** pour obtenir aussitôt ton propre salon vocal.\n\n"
+        f"Un panneau de contrôle apparaît dans le salon :\n\n{CONTROL_PANEL_TEXT}\n\n"
+        "Le salon disparaît automatiquement quand il se vide."
+    )
+    info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["saphir"]))
+    if await post_once(info_channel, bot.user.id, info_embed, "Saphir · Hub vocal info"):
+        report.append("📝 Message d'explication poste")
+    return report
 
 
 def build_control_embed(owner: discord.Member) -> discord.Embed:
@@ -167,63 +215,12 @@ class VoiceHub(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_vocal(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True, ephemeral=True)
-        guild = interaction.guild
-        report = []
-
-        category = discord.utils.get(guild.categories, name=VOICE_HUB_CATEGORY_NAME)
-        try:
-            if category is None:
-                category = await guild.create_category(VOICE_HUB_CATEGORY_NAME, reason="Configuration vocal (Saphir)")
-                report.append(f"✅ Catégorie créée : {VOICE_HUB_CATEGORY_NAME}")
-            else:
-                report.append(f"= Catégorie déjà présente : {VOICE_HUB_CATEGORY_NAME}")
-        except discord.Forbidden:
-            await interaction.followup.send("❌ Permissions insuffisantes pour créer la catégorie.", ephemeral=True)
-            return
-
-        hub = discord.utils.get(category.channels, name=VOICE_HUB_CHANNEL_NAME)
-        try:
-            if hub is None:
-                await guild.create_voice_channel(
-                    VOICE_HUB_CHANNEL_NAME, category=category, reason="Configuration vocal (Saphir)"
-                )
-                report.append(f"✅ Salon créé : {VOICE_HUB_CHANNEL_NAME}")
-            else:
-                report.append(f"= Salon déjà présent : {VOICE_HUB_CHANNEL_NAME}")
-        except discord.Forbidden:
-            report.append(f"❌ Salon refusé (permissions) : {VOICE_HUB_CHANNEL_NAME}")
-
-        readonly_overwrites = {guild.default_role: discord.PermissionOverwrite(send_messages=False)}
-        info_channel = discord.utils.get(category.channels, name=VOICE_HUB_INFO_CHANNEL_NAME)
-        try:
-            if info_channel is None:
-                info_channel = await guild.create_text_channel(
-                    VOICE_HUB_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites, reason="Configuration vocal (Saphir)"
-                )
-                report.append(f"✅ Salon d'explication créé : {info_channel.mention}")
-            else:
-                await info_channel.edit(overwrites=readonly_overwrites, reason="Configuration vocal (Saphir)")
-                report.append(f"= Salon d'explication déjà présent : {info_channel.mention}")
-
-            already_posted = False
-            async for msg in info_channel.history(limit=10):
-                if msg.author.id == self.bot.user.id and msg.embeds and msg.embeds[0].footer.text == "Saphir · Hub vocal info":
-                    already_posted = True
-                    break
-            if not already_posted:
-                info_text = (
-                    f"🎧 **Salons vocaux personnels**\n\n"
-                    f"Rejoins **{VOICE_HUB_CHANNEL_NAME}** pour obtenir aussitôt ton propre salon vocal.\n\n"
-                    f"Un panneau de contrôle apparaît dans le salon :\n\n{CONTROL_PANEL_TEXT}\n\n"
-                    "Le salon disparaît automatiquement quand il se vide."
-                )
-                info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["saphir"]))
-                info_embed.set_footer(text="Saphir · Hub vocal info")
-                await info_channel.send(embed=info_embed)
-        except discord.Forbidden:
-            report.append(f"❌ Salon d'explication refusé (permissions) : {VOICE_HUB_INFO_CHANNEL_NAME}")
-
-        embed = discord.Embed(title="🎧 Configuration vocale", description="\n".join(report), color=discord.Color(COLORS["saphir"]))
+        report = await run_setup(self.bot, interaction.guild)
+        embed = discord.Embed(
+            title="🎧 Configuration vocale",
+            description="\n".join(report),
+            color=discord.Color(COLORS["saphir"]),
+        )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @setup_vocal.error

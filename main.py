@@ -41,6 +41,7 @@ INITIAL_COGS = [
     "cogs.diagnostic",
     "cogs.osint",
     "cogs.help",
+    "cogs.setupall",
 ]
 
 

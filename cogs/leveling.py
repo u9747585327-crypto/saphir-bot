@@ -17,6 +17,7 @@ from config import (
     LEVELS_INFO_CHANNEL_NAME,
 )
 from cogs._shared import handle_app_error
+from services.setup_kit import ensure_category, ensure_text_channel, post_once, readonly_overwrites
 from storage import aload_json, asave_json
 
 TEXT_XP_MIN, TEXT_XP_MAX = 15, 25
@@ -90,12 +91,16 @@ class Leveling(commands.Cog):
     #  Rôles de niveau (empilés)
     # ------------------------------------------------------------------ #
 
-    async def _sync_level_roles(self, member: discord.Member, new_level: int, settings: dict = None):
+    async def _sync_level_roles(self, member: discord.Member, new_level: int, settings: dict = None) -> bool:
+        """Donne au membre tous les rôles de palier qu'il a atteints. Retourne True si
+        l'attribution a réussi (ou s'il n'y avait rien à faire), False si Discord l'a
+        refusée — typiquement quand le rôle du bot est plus bas que le rôle à donner.
+        L'échec était auparavant avalé en silence, ce qui rendait le problème invisible."""
         settings = settings if settings is not None else await aload_json(GUILD_SETTINGS_FILE, {})
         guild_settings = settings.get(str(member.guild.id), {})
         level_role_ids = guild_settings.get("level_role_ids", {})
         if not level_role_ids:
-            return
+            return True
 
         to_add = []
         for threshold_str, role_id in level_role_ids.items():
@@ -105,11 +110,16 @@ class Leveling(commands.Cog):
             if role and role not in member.roles:
                 to_add.append(role)
 
-        if to_add:
-            try:
-                await member.add_roles(*to_add, reason="Récompense de niveau")
-            except discord.Forbidden:
-                pass
+        if not to_add:
+            return True
+
+        try:
+            await member.add_roles(*to_add, reason="Récompense de niveau")
+            return True
+        except discord.Forbidden:
+            noms = ", ".join(r.name for r in to_add)
+            print(f"⚠️ Rôles de niveau refusés pour {member} ({noms}) — le rôle du bot est probablement trop bas")
+            return False
 
     # ------------------------------------------------------------------ #
     #  Classement en direct
@@ -198,47 +208,22 @@ class Leveling(commands.Cog):
     #  Setup
     # ------------------------------------------------------------------ #
 
-    @app_commands.command(
-        name="setup-niveaux",
-        description="Crée le salon d'annonce, le classement en direct et les rôles automatiques par niveau",
-    )
-    @app_commands.checks.has_permissions(administrator=True)
-    async def setup_niveaux(self, interaction: discord.Interaction):
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        guild = interaction.guild
+    async def run_setup(self, guild: discord.Guild) -> list:
+        """Logique de /setup-niveaux, appelable aussi par /setup-tout."""
         report = []
+        overwrites = readonly_overwrites(guild)  # lisible par tous, seul Saphir y poste
 
         # 0. catégorie qui regroupe les salons de niveaux
-        category = discord.utils.get(guild.categories, name=LEVELS_CATEGORY_NAME)
-        try:
-            if category is None:
-                category = await guild.create_category(LEVELS_CATEGORY_NAME, reason="Configuration niveaux (Saphir)")
-                report.append(f"✅ Catégorie créée : {LEVELS_CATEGORY_NAME}")
-            else:
-                report.append(f"= Catégorie déjà présente : {LEVELS_CATEGORY_NAME}")
-        except discord.Forbidden:
-            await interaction.followup.send("❌ Permissions insuffisantes pour créer la catégorie.", ephemeral=True)
-            return
-
-        # les membres peuvent lire ces salons mais pas y écrire — seul Saphir y poste
-        readonly_overwrites = {guild.default_role: discord.PermissionOverwrite(send_messages=False)}
+        category, line = await ensure_category(guild, LEVELS_CATEGORY_NAME)
+        report.append(line)
+        if category is None:
+            return report
 
         # 1. salon d'annonce des passages de niveau
-        announce_channel = discord.utils.get(guild.text_channels, name=LEVEL_UP_CHANNEL_NAME)
-        try:
-            if announce_channel is None:
-                announce_channel = await guild.create_text_channel(
-                    LEVEL_UP_CHANNEL_NAME, category=category, overwrites=readonly_overwrites, reason="Configuration niveaux (Saphir)"
-                )
-                report.append(f"✅ Salon d'annonce créé : {announce_channel.mention}")
-            else:
-                if announce_channel.category != category:
-                    await announce_channel.edit(category=category, reason="Configuration niveaux (Saphir)")
-                await announce_channel.edit(overwrites=readonly_overwrites, reason="Configuration niveaux (Saphir)")
-                report.append(f"= Salon d'annonce déjà présent : {announce_channel.mention}")
-        except discord.Forbidden:
-            await interaction.followup.send("❌ Permissions insuffisantes pour créer le salon d'annonce.", ephemeral=True)
-            return
+        _announce, line = await ensure_text_channel(
+            guild, LEVEL_UP_CHANNEL_NAME, category=category, overwrites=overwrites
+        )
+        report.append(line)
 
         # 2. rôles automatiques par niveau
         settings = await aload_json(GUILD_SETTINGS_FILE, {})
@@ -268,7 +253,7 @@ class Leveling(commands.Cog):
         # donc jamais tout seul. On rattrape ici tous les membres déjà éligibles.
         levels_data = await aload_json(LEVELS_DATA_FILE, {})
         guild_levels = levels_data.get(str(guild.id), {})
-        backfilled = 0
+        backfilled, refused = 0, 0
         for user_id_str, entry in guild_levels.items():
             member = guild.get_member(int(user_id_str))
             if member is None:
@@ -279,71 +264,64 @@ class Leveling(commands.Cog):
                 for threshold_str, role_id in level_role_ids.items()
             )
             if missing:
-                await self._sync_level_roles(member, level, settings)
-                backfilled += 1
+                if await self._sync_level_roles(member, level, settings):
+                    backfilled += 1
+                else:
+                    refused += 1
+
         if backfilled:
             report.append(f"🔄 Rôles rattrapés pour {backfilled} membre(s) déjà qualifié(s)")
+        if refused:
+            report.append(
+                f"⚠️ **{refused} membre(s) n'ont PAS reçu leur rôle** : Discord refuse l'attribution. "
+                f"Monte le rôle {guild.me.top_role.mention} au-dessus des rôles de niveau dans "
+                "Paramètres du serveur → Rôles, puis relance cette commande."
+            )
+        if not backfilled and not refused:
+            report.append("= Aucun rattrapage nécessaire (tout le monde a déjà ses rôles)")
 
         # 2.6. salon d'explication (paliers + commandes), posté une seule fois
-        info_channel = discord.utils.get(guild.text_channels, name=LEVELS_INFO_CHANNEL_NAME)
-        try:
-            if info_channel is None:
-                info_channel = await guild.create_text_channel(
-                    LEVELS_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites, reason="Configuration niveaux (Saphir)"
-                )
-                report.append(f"✅ Salon d'explication créé : {info_channel.mention}")
-            else:
-                if info_channel.category != category:
-                    await info_channel.edit(category=category, reason="Configuration niveaux (Saphir)")
-                await info_channel.edit(overwrites=readonly_overwrites, reason="Configuration niveaux (Saphir)")
-                report.append(f"= Salon d'explication déjà présent : {info_channel.mention}")
+        info_channel, line = await ensure_text_channel(
+            guild, LEVELS_INFO_CHANNEL_NAME, category=category, overwrites=overwrites
+        )
+        report.append(line)
 
-            already_posted = False
-            async for msg in info_channel.history(limit=10):
-                if msg.author.id == self.bot.user.id and msg.embeds and msg.embeds[0].footer.text == "Saphir · Niveaux info":
-                    already_posted = True
-                    break
-            if not already_posted:
-                palier_lines = []
-                for threshold, name, _color in LEVEL_ROLES:
-                    role = guild.get_role(level_role_ids.get(str(threshold), 0))
-                    palier_lines.append(f"• Niveau **{threshold}** — {role.mention if role else name}")
-                info_text = (
-                    "📊 **Système de niveaux**\n\n"
-                    "Tu gagnes de l'XP en écrivant des messages (léger délai anti-spam entre deux gains) "
-                    "et en restant en vocal avec au moins une autre personne (hors salon AFK). Chaque "
-                    "niveau débloque un rôle, qui s'ajoute aux précédents :\n\n"
-                    + "\n".join(palier_lines)
-                    + "\n\n`/niveau [membre]` pour voir une progression, `/classement` pour le classement du serveur."
-                )
-                info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["saphir"]))
-                info_embed.set_footer(text="Saphir · Niveaux info")
-                await info_channel.send(embed=info_embed)
-        except discord.Forbidden:
-            report.append(f"❌ Salon d'explication refusé (permissions) : {LEVELS_INFO_CHANNEL_NAME}")
+        palier_lines = []
+        for threshold, name, _color in LEVEL_ROLES:
+            role = guild.get_role(level_role_ids.get(str(threshold), 0))
+            palier_lines.append(f"• Niveau **{threshold}** — {role.mention if role else name}")
+        info_text = (
+            "📊 **Système de niveaux**\n\n"
+            "Tu gagnes de l'XP en écrivant des messages (léger délai anti-spam entre deux gains) "
+            "et en restant en vocal avec au moins une autre personne (hors salon AFK). Chaque "
+            "niveau débloque un rôle, qui s'ajoute aux précédents :\n\n"
+            + "\n".join(palier_lines)
+            + "\n\n`/niveau [membre]` pour voir une progression, `/classement` pour le classement du serveur."
+        )
+        info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["saphir"]))
+        if await post_once(info_channel, self.bot.user.id, info_embed, "Saphir · Niveaux info"):
+            report.append("📝 Message d'explication posté")
 
         # 3. salon de classement en direct
-        lb_channel = guild.get_channel(guild_settings.get("leaderboard_channel_id", 0))
-        if lb_channel is None:
-            lb_channel = discord.utils.get(guild.text_channels, name=LEADERBOARD_CHANNEL_NAME)
-        try:
-            if lb_channel is None:
-                lb_channel = await guild.create_text_channel(
-                    LEADERBOARD_CHANNEL_NAME, category=category, overwrites=readonly_overwrites, reason="Configuration niveaux (Saphir)"
-                )
-                report.append(f"✅ Salon classement créé : {lb_channel.mention}")
-            else:
-                if lb_channel.category != category:
-                    await lb_channel.edit(category=category, reason="Configuration niveaux (Saphir)")
-                await lb_channel.edit(overwrites=readonly_overwrites, reason="Configuration niveaux (Saphir)")
-                report.append(f"= Salon classement déjà présent : {lb_channel.mention}")
+        lb_channel, line = await ensure_text_channel(
+            guild, LEADERBOARD_CHANNEL_NAME, category=category, overwrites=overwrites
+        )
+        report.append(line)
+        if lb_channel is not None:
             guild_settings["leaderboard_channel_id"] = lb_channel.id
-        except discord.Forbidden:
-            report.append(f"❌ Salon classement refusé (permissions) : {LEADERBOARD_CHANNEL_NAME}")
 
         await asave_json(GUILD_SETTINGS_FILE, settings)
         await self._refresh_leaderboard_for_guild(guild, settings)
+        return report
 
+    @app_commands.command(
+        name="setup-niveaux",
+        description="Crée le salon d'annonce, le classement en direct et les rôles automatiques par niveau",
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def setup_niveaux(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        report = await self.run_setup(interaction.guild)
         embed = discord.Embed(
             title="🎉 Configuration des niveaux",
             description="\n".join(report),

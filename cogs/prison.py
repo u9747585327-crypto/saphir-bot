@@ -18,6 +18,14 @@ from config import (
     PRISON_VOICE_CHANNEL,
 )
 from cogs._shared import SaphirModal
+from services.setup_kit import (
+    ensure_category,
+    ensure_role,
+    ensure_text_channel,
+    ensure_voice_channel,
+    post_once,
+    readonly_overwrites,
+)
 from storage import aload_json, asave_json
 
 DURATION_RE = re.compile(r"^(\d+)\s*([smhdw])$", re.IGNORECASE)
@@ -130,32 +138,16 @@ class Prison(commands.Cog):
     #  Setup
     # ------------------------------------------------------------------ #
 
-    @app_commands.command(
-        name="setup-prison",
-        description="Crée (ou met à jour) la catégorie Alcatraz, ses salons et le rôle Exilé",
-    )
-    @app_commands.checks.has_permissions(administrator=True)
-    async def setup_prison(self, interaction: discord.Interaction):
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        guild = interaction.guild
+    async def run_setup(self, guild: discord.Guild) -> list:
+        """Logique de /setup-prison, appelable aussi par /setup-tout."""
         report = []
 
-        exile_role = discord.utils.get(guild.roles, name=EXILE_ROLE_NAME)
-        try:
-            if exile_role is None:
-                exile_role = await guild.create_role(
-                    name=EXILE_ROLE_NAME,
-                    color=discord.Color(COLORS["danger"]),
-                    hoist=True,
-                    mentionable=False,
-                    reason="Configuration de la prison (Saphir)",
-                )
-                report.append(f"✅ Rôle créé : {EXILE_ROLE_NAME}")
-            else:
-                report.append(f"= Rôle déjà présent : {EXILE_ROLE_NAME}")
-        except discord.Forbidden:
-            await interaction.followup.send("❌ Permissions insuffisantes pour créer le rôle Exilé.", ephemeral=True)
-            return
+        exile_role, line = await ensure_role(
+            guild, EXILE_ROLE_NAME, color=COLORS["danger"], hoist=True
+        )
+        report.append(line)
+        if exile_role is None:
+            return report
 
         overwrites = {
             # les membres voient Alcatraz (texte + vocal) mais ne peuvent ni écrire
@@ -175,98 +167,49 @@ class Prison(commands.Cog):
             ),
         }
 
-        category = discord.utils.get(guild.categories, name=PRISON_CATEGORY_NAME)
-        try:
-            if category is None:
-                category = await guild.create_category(
-                    PRISON_CATEGORY_NAME, overwrites=overwrites, reason="Configuration de la prison (Saphir)"
-                )
-                report.append(f"✅ Catégorie créée : {PRISON_CATEGORY_NAME}")
-            else:
-                await category.edit(overwrites=overwrites, reason="Configuration de la prison (Saphir)")
-                report.append(f"🔄 Catégorie mise à jour : {PRISON_CATEGORY_NAME}")
-        except discord.Forbidden:
-            await interaction.followup.send("❌ Permissions insuffisantes pour créer la catégorie.", ephemeral=True)
-            return
+        category, line = await ensure_category(guild, PRISON_CATEGORY_NAME, overwrites=overwrites)
+        report.append(line)
+        if category is None:
+            return report
 
-        text_channel = discord.utils.get(category.channels, name=PRISON_TEXT_CHANNEL)
-        try:
-            if text_channel is None:
-                text_channel = await guild.create_text_channel(
-                    PRISON_TEXT_CHANNEL, category=category, overwrites=overwrites, reason="Configuration de la prison (Saphir)"
-                )
-                report.append(f"✅ Salon texte créé : {PRISON_TEXT_CHANNEL}")
-            else:
-                await text_channel.edit(overwrites=overwrites, reason="Configuration de la prison (Saphir)")
-                report.append(f"🔄 Salon texte mis à jour : {PRISON_TEXT_CHANNEL}")
-        except discord.Forbidden:
-            report.append(f"❌ Salon texte refusé (permissions) : {PRISON_TEXT_CHANNEL}")
+        _text_channel, line = await ensure_text_channel(
+            guild, PRISON_TEXT_CHANNEL, category=category, overwrites=overwrites
+        )
+        report.append(line)
 
         # salon d'explication en lecture seule pour tout le monde, y compris le rôle Exilé
         # (contrairement aux autres salons de la catégorie, où Exilé peut écrire)
-        info_overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
-            exile_role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
-        }
-        info_channel = discord.utils.get(category.channels, name=PRISON_INFO_CHANNEL_NAME)
-        try:
-            if info_channel is None:
-                info_channel = await guild.create_text_channel(
-                    PRISON_INFO_CHANNEL_NAME, category=category, overwrites=info_overwrites, reason="Configuration de la prison (Saphir)"
-                )
-                report.append(f"✅ Salon d'explication créé : {info_channel.mention}")
-            else:
-                await info_channel.edit(overwrites=info_overwrites, reason="Configuration de la prison (Saphir)")
-                report.append(f"= Salon d'explication déjà présent : {info_channel.mention}")
+        info_overwrites = readonly_overwrites(guild, exile_role)
 
-            already_posted = False
-            async for msg in info_channel.history(limit=10):
-                if msg.author.id == self.bot.user.id and msg.embeds and msg.embeds[0].footer.text == "Saphir · Alcatraz info":
-                    already_posted = True
-                    break
-            if not already_posted:
-                info_text = (
-                    "🔒 **Alcatraz**\n\n"
-                    "Un membre envoyé ici par un modérateur (`/jail`) perd temporairement tous ses "
-                    "rôles et ne peut communiquer que dans cette catégorie, pour la durée indiquée "
-                    f"dans l'annonce (visible dans {PRISON_SANCTIONS_CHANNEL_NAME}). Ses rôles sont "
-                    "restaurés automatiquement à la fin de la peine (ou via `/unjail` pour une "
-                    "libération anticipée)."
-                )
-                info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["danger"]))
-                info_embed.set_footer(text="Saphir · Alcatraz info")
-                await info_channel.send(embed=info_embed)
-        except discord.Forbidden:
-            report.append(f"❌ Salon d'explication refusé (permissions) : {PRISON_INFO_CHANNEL_NAME}")
+        info_channel, line = await ensure_text_channel(
+            guild, PRISON_INFO_CHANNEL_NAME, category=category, overwrites=info_overwrites
+        )
+        report.append(line)
+
+        info_text = (
+            "🔒 **Alcatraz**\n\n"
+            "Un membre envoyé ici par un modérateur (`/jail`) perd temporairement tous ses "
+            "rôles et ne peut communiquer que dans cette catégorie, pour la durée indiquée "
+            f"dans l'annonce (visible dans {PRISON_SANCTIONS_CHANNEL_NAME}). Ses rôles sont "
+            "restaurés automatiquement à la fin de la peine (ou via `/unjail` pour une "
+            "libération anticipée)."
+        )
+        info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["danger"]))
+        if await post_once(info_channel, self.bot.user.id, info_embed, "Saphir · Alcatraz info"):
+            report.append("📝 Message d'explication posté")
 
         # salon d'historique des sanctions, en lecture seule — séparé de la cellule pour
-        # garder un journal propre des jail/liberations sans le mélanger aux messages des
+        # garder un journal propre des jail/libérations sans le mélanger aux messages des
         # membres exilés (qui, eux, peuvent écrire dans la cellule)
-        sanctions_channel = discord.utils.get(category.channels, name=PRISON_SANCTIONS_CHANNEL_NAME)
-        try:
-            if sanctions_channel is None:
-                sanctions_channel = await guild.create_text_channel(
-                    PRISON_SANCTIONS_CHANNEL_NAME, category=category, overwrites=info_overwrites, reason="Configuration de la prison (Saphir)"
-                )
-                report.append(f"✅ Salon d'historique créé : {sanctions_channel.mention}")
-            else:
-                await sanctions_channel.edit(overwrites=info_overwrites, reason="Configuration de la prison (Saphir)")
-                report.append(f"= Salon d'historique déjà présent : {sanctions_channel.mention}")
-        except discord.Forbidden:
-            report.append(f"❌ Salon d'historique refusé (permissions) : {PRISON_SANCTIONS_CHANNEL_NAME}")
+        _sanctions, line = await ensure_text_channel(
+            guild, PRISON_SANCTIONS_CHANNEL_NAME, category=category, overwrites=info_overwrites
+        )
+        report.append(line)
 
-        voice_channel = discord.utils.get(category.channels, name=PRISON_VOICE_CHANNEL)
-        try:
-            if voice_channel is None:
-                await guild.create_voice_channel(
-                    PRISON_VOICE_CHANNEL, category=category, overwrites=overwrites, reason="Configuration de la prison (Saphir)"
-                )
-                report.append(f"✅ Salon vocal créé : {PRISON_VOICE_CHANNEL}")
-            else:
-                await voice_channel.edit(overwrites=overwrites, reason="Configuration de la prison (Saphir)")
-                report.append(f"🔄 Salon vocal mis à jour : {PRISON_VOICE_CHANNEL}")
-        except discord.Forbidden:
-            report.append(f"❌ Salon vocal refusé (permissions) : {PRISON_VOICE_CHANNEL}")
+        _voice, line = await ensure_voice_channel(
+            guild, PRISON_VOICE_CHANNEL, category=category, overwrites=overwrites
+        )
+        report.append(line)
 
         # isole le rôle Exilé de tous les autres salons/catégories existants : il ne doit
         # voir qu'Alcatraz, peu importe les permissions accordées à @everyone ailleurs
@@ -281,7 +224,16 @@ class Prison(commands.Cog):
             except discord.Forbidden:
                 pass
         report.append(f"🔒 Isolation appliquée sur {locked} salon(s)/catégorie(s) existants")
+        return report
 
+    @app_commands.command(
+        name="setup-prison",
+        description="Crée (ou met à jour) la catégorie Alcatraz, ses salons et le rôle Exilé",
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def setup_prison(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        report = await self.run_setup(interaction.guild)
         embed = discord.Embed(
             title="🔒 Configuration de la prison",
             description="\n".join(report),
