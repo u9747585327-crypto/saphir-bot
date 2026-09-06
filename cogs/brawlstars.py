@@ -74,7 +74,13 @@ async def _bs_get(path: str):
                 if resp.status == 429:
                     return None, "rate_limited"
                 return None, f"http_{resp.status}"
-    except (aiohttp.ClientError, TimeoutError):
+    except (aiohttp.ClientError, TimeoutError) as e:
+        print(f"⚠️ Erreur réseau Brawl Stars ({path}) : {e}")
+        return None, "network"
+    except Exception as e:
+        # filet de sécurité : n'importe quelle autre erreur inattendue (JSON invalide,
+        # etc.) est logguée au lieu de remonter en silence jusqu'au Modal.on_error
+        print(f"⚠️ Erreur inattendue Brawl Stars ({path}) : {type(e).__name__}: {e}")
         return None, "network"
 
 

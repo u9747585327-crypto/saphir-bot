@@ -4,6 +4,9 @@ from discord.ext import commands
 
 from cogs._shared import handle_app_error
 from config import (
+    ADMIN_CATEGORY_NAME,
+    ADMIN_COMMAND_CHANNEL_NAME,
+    ADMIN_INFO_CHANNEL_NAME,
     COLORS,
     HIERARCHY_ROLES,
     LOGS_CATEGORY_NAME,
@@ -12,6 +15,22 @@ from config import (
     PRISON_CATEGORY_NAME,
     STAFF_ROLE_NAMES,
 )
+
+# libellés lisibles pour les clés de permission utilisées dans HIERARCHY_ROLES,
+# affichés dans le salon d'explication créé par /setup-administration
+PERM_LABELS = {
+    "administrator": "Administrateur (tous les droits)",
+    "ban_members": "Bannir des membres",
+    "kick_members": "Expulser des membres",
+    "manage_roles": "Gérer les rôles",
+    "manage_channels": "Gérer les salons",
+    "manage_guild": "Gérer le serveur",
+    "moderate_members": "Timeout / modérer les membres",
+    "manage_messages": "Gérer les messages",
+    "mute_members": "Rendre muet en vocal",
+    "deafen_members": "Rendre sourd en vocal",
+    "move_members": "Déplacer en vocal",
+}
 
 # migration ponctuelle : anciens noms de rôles (avant l'ajout du style 「🜲・...」)
 # vers leur équivalent stylé actuel. Sert à /nettoyage-roles et /reset-roles.
@@ -149,6 +168,94 @@ class Hierarchy(commands.Cog):
             interaction, error,
             perm_message="Seul un administrateur peut utiliser cette commande.",
             command_label="setup-roles",
+        )
+
+    @app_commands.command(
+        name="setup-administration",
+        description="Crée le hub d'administration : salon de commandes staff + salon expliquant la hiérarchie",
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def setup_administration(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        guild = interaction.guild
+        report = []
+
+        # tout rang au-dessus de Membre (dernier élément de HIERARCHY_ROLES) est considéré staff ici
+        staff_role_names = [name for name, *_ in HIERARCHY_ROLES[:-1]]
+        staff_roles = [r for n in staff_role_names if (r := discord.utils.get(guild.roles, name=n))]
+
+        category = discord.utils.get(guild.categories, name=ADMIN_CATEGORY_NAME)
+        try:
+            if category is None:
+                category = await guild.create_category(ADMIN_CATEGORY_NAME, reason="Configuration administration (Saphir)")
+                report.append(f"✅ Catégorie créée : {ADMIN_CATEGORY_NAME}")
+            else:
+                report.append(f"= Catégorie déjà présente : {ADMIN_CATEGORY_NAME}")
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Permissions insuffisantes pour créer la catégorie.", ephemeral=True)
+            return
+
+        # salon de commandes, réservé au staff (masqué pour tout le monde d'autre)
+        command_overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False)}
+        for role in staff_roles:
+            command_overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
+
+        command_channel = discord.utils.get(category.channels, name=ADMIN_COMMAND_CHANNEL_NAME)
+        try:
+            if command_channel is None:
+                command_channel = await guild.create_text_channel(
+                    ADMIN_COMMAND_CHANNEL_NAME, category=category, overwrites=command_overwrites, reason="Configuration administration (Saphir)"
+                )
+                report.append(f"✅ Salon créé : {ADMIN_COMMAND_CHANNEL_NAME}")
+            else:
+                await command_channel.edit(overwrites=command_overwrites, reason="Configuration administration (Saphir)")
+                report.append(f"= Salon déjà présent : {ADMIN_COMMAND_CHANNEL_NAME}")
+        except discord.Forbidden:
+            report.append(f"❌ Salon refusé (permissions) : {ADMIN_COMMAND_CHANNEL_NAME}")
+
+        # salon d'explication des rôles, visible par tout le monde (lecture seule)
+        info_overwrites = {guild.default_role: discord.PermissionOverwrite(send_messages=False)}
+        info_channel = discord.utils.get(category.channels, name=ADMIN_INFO_CHANNEL_NAME)
+        try:
+            if info_channel is None:
+                info_channel = await guild.create_text_channel(
+                    ADMIN_INFO_CHANNEL_NAME, category=category, overwrites=info_overwrites, reason="Configuration administration (Saphir)"
+                )
+                report.append(f"✅ Salon créé : {info_channel.mention}")
+            else:
+                await info_channel.edit(overwrites=info_overwrites, reason="Configuration administration (Saphir)")
+                report.append(f"= Salon déjà présent : {info_channel.mention}")
+
+            already_posted = False
+            async for msg in info_channel.history(limit=10):
+                if msg.author.id == self.bot.user.id and msg.embeds and msg.embeds[0].footer.text == "Saphir · Administration info":
+                    already_posted = True
+                    break
+            if not already_posted:
+                role_blocks = []
+                for name, _color, perms in HIERARCHY_ROLES:
+                    role = discord.utils.get(guild.roles, name=name)
+                    label = role.mention if role else name
+                    perm_text = ", ".join(PERM_LABELS.get(p, p) for p in perms) if perms else "Aucune permission spéciale"
+                    role_blocks.append(f"**{label}**\n{perm_text}")
+                info_text = "🛠️ **Hiérarchie des rôles**\n\n" + "\n\n".join(role_blocks)
+                info_embed = discord.Embed(description=info_text, color=discord.Color(COLORS["saphir"]))
+                info_embed.set_footer(text="Saphir · Administration info")
+                await info_channel.send(embed=info_embed)
+        except discord.Forbidden:
+            report.append(f"❌ Salon refusé (permissions) : {ADMIN_INFO_CHANNEL_NAME}")
+
+        embed = discord.Embed(
+            title="🛠️ Configuration administration", description="\n".join(report), color=discord.Color(COLORS["saphir"])
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @setup_administration.error
+    async def setup_administration_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        await handle_app_error(
+            interaction, error,
+            perm_message="Seul un administrateur peut utiliser cette commande.",
+            command_label="setup-administration",
         )
 
     @app_commands.command(

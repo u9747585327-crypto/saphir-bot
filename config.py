@@ -100,6 +100,12 @@ HIERARCHY_ROLES = [
 # automatique des détenteurs de la permission Administrateur)
 STAFF_ROLE_NAMES = ["「🜲・👑 𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」", "「🜲・𝗖𝗼-𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」", "「🜲・𝗖𝗼𝗺𝗺𝗮𝗻𝗱𝗮𝗻𝘁」"]
 
+# hub d'administration : catégorie + salon de commandes réservé à tout rang au-dessus de
+# Membre (donc HIERARCHY_ROLES sans son dernier élément), + salon expliquant la hiérarchie
+ADMIN_CATEGORY_NAME = "🛠️ ADMINISTRATION"
+ADMIN_COMMAND_CHANNEL_NAME = "🛠️・commandes-staff"
+ADMIN_INFO_CHANNEL_NAME = "🛠️・infos-roles"
+
 # rôles de permission autonomes, indépendants du rang, pour débloquer /jail et /unjail
 PERM_JAIL_ROLE_NAME = "「🜲・⛓️ Perm Jail」"
 PERM_UNJAIL_ROLE_NAME = "「🜲・🔓 Perm Unjail」"
