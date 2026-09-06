@@ -1,8 +1,13 @@
+import time
+
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from config import VOICE_HUB_CATEGORY_NAME, VOICE_HUB_CHANNEL_NAME, COLORS
+
+# anti-spam : délai minimal entre deux créations de salon perso par le même membre
+SPAWN_COOLDOWN_SECONDS = 15
 
 
 def build_control_embed(owner: discord.Member) -> discord.Embed:
@@ -29,7 +34,14 @@ class RenameModal(discord.ui.Modal, title="✏️ Renommer le salon"):
         self.channel = channel
 
     async def on_submit(self, interaction: discord.Interaction):
-        await self.channel.edit(name=str(self.name.value))
+        try:
+            await self.channel.edit(name=str(self.name.value))
+        except discord.HTTPException:
+            await interaction.response.send_message(
+                "❌ Impossible de renommer le salon (il a peut-être disparu, ou permissions insuffisantes).",
+                ephemeral=True,
+            )
+            return
         await interaction.response.send_message(f"Salon renommé en **{self.name.value}**.", ephemeral=True)
 
 
@@ -46,7 +58,14 @@ class LimitModal(discord.ui.Modal, title="🔢 Limite de places"):
         except ValueError:
             await interaction.response.send_message("Entre un nombre valide.", ephemeral=True)
             return
-        await self.channel.edit(user_limit=value)
+        try:
+            await self.channel.edit(user_limit=value)
+        except discord.HTTPException:
+            await interaction.response.send_message(
+                "❌ Impossible de changer la limite (le salon a peut-être disparu, ou permissions insuffisantes).",
+                ephemeral=True,
+            )
+            return
         label = "illimitée" if value == 0 else str(value)
         await interaction.response.send_message(f"Limite fixée à **{label}**.", ephemeral=True)
 
@@ -133,6 +152,7 @@ class VoiceControlView(discord.ui.View):
 class VoiceHub(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.spawn_cooldowns = {}
         bot.add_view(VoiceControlView())
 
     @app_commands.command(
@@ -190,6 +210,12 @@ class VoiceHub(commands.Cog):
 
         # joined the hub -> spawn a personal channel
         if after.channel and after.channel.name == VOICE_HUB_CHANNEL_NAME and before.channel != after.channel:
+            # anti-spam : on ignore les allers-retours trop rapprochés dans le hub
+            now = time.time()
+            if now - self.spawn_cooldowns.get(member.id, 0) < SPAWN_COOLDOWN_SECONDS:
+                return
+            self.spawn_cooldowns[member.id] = now
+
             category = after.channel.category
             overwrites = dict(after.channel.overwrites)
             overwrites[member] = discord.PermissionOverwrite(
@@ -200,19 +226,27 @@ class VoiceHub(commands.Cog):
                 connect=True,
                 view_channel=True,
             )
-            new_channel = await guild.create_voice_channel(
-                f"🔊 Salon de {member.display_name}",
-                category=category,
-                overwrites=overwrites,
-                reason="Salon vocal temporaire",
-            )
+            try:
+                new_channel = await guild.create_voice_channel(
+                    f"🔊 Salon de {member.display_name}",
+                    category=category,
+                    overwrites=overwrites,
+                    reason="Salon vocal temporaire",
+                )
+            except discord.HTTPException as e:
+                print(f"⚠️ VoiceHub : création du salon impossible ({e})")
+                return
+
             try:
                 await member.move_to(new_channel, reason="Salon vocal temporaire")
             except discord.HTTPException:
                 await new_channel.delete(reason="Déplacement impossible")
                 return
 
-            await new_channel.send(embed=build_control_embed(member), view=VoiceControlView())
+            try:
+                await new_channel.send(embed=build_control_embed(member), view=VoiceControlView())
+            except discord.HTTPException:
+                pass
 
         # left a temp channel -> delete it once empty
         if before.channel and before.channel.category and before.channel.category.name == VOICE_HUB_CATEGORY_NAME:

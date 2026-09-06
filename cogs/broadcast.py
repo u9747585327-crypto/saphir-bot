@@ -10,7 +10,7 @@ DM_SEND_DELAY_SECONDS = 1.0
 
 class ConfirmBroadcastView(discord.ui.View):
     def __init__(self, author_id: int):
-        super().__init__(timeout=60)
+        super().__init__(timeout=300)
         self.author_id = author_id
         self.value = None
 
@@ -48,28 +48,48 @@ async def _send_broadcast(interaction: discord.Interaction, targets: list, messa
             ephemeral=True,
         )
         await view.wait()
+        if view.value is None:
+            await interaction.edit_original_response(content="⏱️ Confirmation expirée, envoi annulé.", view=None)
+            return
         if not view.value:
             await interaction.edit_original_response(content="Envoi annulé.", view=None)
             return
-        await interaction.edit_original_response(content="⏳ Envoi en cours...", view=None)
+        await interaction.edit_original_response(content=f"⏳ Envoi en cours... (0/{len(targets)})", view=None)
     else:
         await interaction.response.defer(thinking=True, ephemeral=True)
 
+    total = len(targets)
+    multi = total > 1
     sent, failed = 0, 0
-    for target in targets:
+    for i, target in enumerate(targets, start=1):
         try:
             await target.send(f"📨 Message de la part de **{interaction.guild.name}** :\n\n{message}")
             sent += 1
         except discord.HTTPException:
             failed += 1
-        if len(targets) > 1:
+        if multi:
+            # point d'avancement régulier : rassure l'admin et confirme que l'envoi progresse
+            if i % 20 == 0:
+                try:
+                    await interaction.edit_original_response(content=f"⏳ Envoi en cours... ({i}/{total})")
+                except discord.HTTPException:
+                    pass
             await asyncio.sleep(DM_SEND_DELAY_SECONDS)
 
     summary = f"✅ Envoyé à {sent} membre(s)."
     if failed:
         summary += f" ⚠️ {failed} membre(s) injoignable(s) (MP fermés)."
 
-    await interaction.followup.send(summary, ephemeral=True)
+    # le récap DOIT arriver même si l'envoi a duré plus de 15 min (jeton d'interaction expiré) :
+    # on tente le followup éphémère, puis on se rabat sur un MP à l'auteur si ça échoue.
+    try:
+        await interaction.followup.send(summary, ephemeral=True)
+    except discord.HTTPException as e:
+        print(f"⚠️ Récap /mp indisponible via l'interaction ({e}) — repli sur un MP à l'auteur")
+        try:
+            await interaction.user.send(f"(Saphir) Récap de ton envoi sur **{interaction.guild.name}** : {summary}")
+        except discord.HTTPException:
+            print(f"⚠️ Récap /mp : impossible de joindre l'auteur en MP non plus. Résultat : {summary}")
 
 
 async def _broadcast_error(interaction: discord.Interaction, error: app_commands.AppCommandError, command_name: str):

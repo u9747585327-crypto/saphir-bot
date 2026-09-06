@@ -132,6 +132,8 @@ class AutoRole(commands.Cog):
 
         removed, skipped, failed = 0, 0, 0
         for member in guild.members:
+            if member.bot:
+                continue
             if role not in member.roles:
                 skipped += 1
                 continue
