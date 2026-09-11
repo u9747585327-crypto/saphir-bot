@@ -26,6 +26,10 @@ from config import (
 # anti-spam : délai minimal entre deux créations de salon perso par le même membre
 SPAWN_COOLDOWN_SECONDS = 15
 
+# prefixe des salons perso crees par le hub -- sert de repli pour les reconnaitre et les
+# supprimer meme apres un redemarrage du bot (le suivi par ID en memoire est alors perdu)
+TEMP_CHANNEL_PREFIX = "🔊 Salon de "
+
 CONTROL_PANEL_TEXT = (
     "✏️ **Renommer** — change le nom du salon\n"
     "🔢 **Limite** — fixe un nombre de places max\n"
@@ -224,6 +228,8 @@ class VoiceHub(commands.Cog):
         # rendre le mute LOCAL au salon -- des que le membre change de salon vocal, on le
         # demute. Un mute serveur classique le suivrait partout, ce que l'auteur ne veut pas.
         self.panel_muted = {}
+        # IDs des salons perso crees par le hub, a supprimer une fois vides
+        self.temp_channels = set()
         bot.add_view(VoiceControlView())
 
     @app_commands.command(
@@ -311,7 +317,7 @@ class VoiceHub(commands.Cog):
             )
             try:
                 new_channel = await guild.create_voice_channel(
-                    f"🔊 Salon de {member.display_name}",
+                    f"{TEMP_CHANNEL_PREFIX}{member.display_name}",
                     category=category,
                     overwrites=overwrites,
                     reason="Salon vocal temporaire",
@@ -320,9 +326,14 @@ class VoiceHub(commands.Cog):
                 print(f"⚠️ VoiceHub : création du salon impossible ({e})")
                 return
 
+            # on retient l'ID pour savoir plus tard qu'il faut le supprimer une fois vide,
+            # sans dependre de sa categorie (le hub peut etre dans n'importe quelle categorie)
+            self.temp_channels.add(new_channel.id)
+
             try:
                 await member.move_to(new_channel, reason="Salon vocal temporaire")
             except discord.HTTPException:
+                self.temp_channels.discard(new_channel.id)
                 await new_channel.delete(reason="Déplacement impossible")
                 return
 
@@ -343,12 +354,19 @@ class VoiceHub(commands.Cog):
             except discord.HTTPException:
                 pass
 
-        # left a temp channel -> delete it once empty
-        if before.channel and before.channel.category and before.channel.category.name == VOICE_HUB_CATEGORY_NAME:
-            if not _is_hub(before.channel) and len(before.channel.members) == 0:
+        # quitte un salon perso -> le supprimer une fois vide. On le reconnait par son ID
+        # (salons crees pendant cette session) OU par son prefixe de nom (repli qui survit a
+        # un redemarrage du bot, ou le set en memoire serait perdu). Independant de la
+        # categorie : le bug precedent exigeait la categorie 🎧 VOCAL, mais un hub place
+        # ailleurs (ex : 🎧 · Appel) creait ses salons ailleurs, jamais supprimes.
+        left = before.channel
+        if left and not _is_hub(left) and len(left.members) == 0:
+            is_temp = left.id in self.temp_channels or left.name.startswith(TEMP_CHANNEL_PREFIX)
+            if is_temp:
+                self.temp_channels.discard(left.id)
                 try:
-                    await before.channel.delete(reason="Salon vocal temporaire vide")
-                except discord.NotFound:
+                    await left.delete(reason="Salon vocal temporaire vide")
+                except (discord.NotFound, discord.Forbidden):
                     pass
 
 
