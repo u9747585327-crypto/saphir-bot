@@ -204,6 +204,11 @@ class Leveling(commands.Cog):
     async def before_leaderboard_refresh(self):
         await self.bot.wait_until_ready()
 
+    @leaderboard_refresh.error
+    async def leaderboard_refresh_error(self, error: Exception):
+        print(f"[!] leaderboard_refresh a plante ({type(error).__name__}: {error}) -- redemarrage")
+        self.leaderboard_refresh.restart()
+
     # ------------------------------------------------------------------ #
     #  Setup
     # ------------------------------------------------------------------ #
@@ -394,6 +399,16 @@ class Leveling(commands.Cog):
     @voice_tick.before_loop
     async def before_voice_tick(self):
         await self.bot.wait_until_ready()
+
+    @voice_tick.error
+    async def voice_tick_error(self, error: Exception):
+        # Une tasks.loop s'arrete DEFINITIVEMENT a la premiere exception non geree, et
+        # discord.py ne la signale que dans son propre logger -- invisible ici, ou tout
+        # passe par print(). Resultat : le comptage des heures vocales s'arretait en
+        # silence jusqu'au prochain redemarrage. On loggue donc nous-memes, puis on
+        # relance la boucle pour qu'elle reprenne au tick suivant.
+        print(f"[!] voice_tick a plante ({type(error).__name__}: {error}) -- redemarrage de la boucle")
+        self.voice_tick.restart()
 
     # ------------------------------------------------------------------ #
     #  Consultation

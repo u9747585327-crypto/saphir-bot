@@ -58,6 +58,23 @@ class Diagnostic(commands.Cog):
         lines.append(f"**Chat IA** : {'✅ Groq connecté' if funchat.is_ai_enabled() else '⚠️ Réponses toutes faites (pas de GROQ_API_KEY)'}")
         lines.append(f"**Brawl Stars** : {'✅ Clé API configurée' if brawlstars.is_configured() else '⚠️ Non configuré (pas de BRAWLSTARS_API_KEY)'}")
 
+        # état des boucles de fond : une tasks.loop morte ne se voit nulle part ailleurs
+        # (c'est ce qui avait arrêté le comptage des heures vocales en silence)
+        for label, cog_name, loop_name in (
+            ("XP vocal (heures)", "Leveling", "voice_tick"),
+            ("Classement auto", "Leveling", "leaderboard_refresh"),
+            ("Libérations Alcatraz", "Prison", "check_releases"),
+        ):
+            cog = self.bot.get_cog(cog_name)
+            loop = getattr(cog, loop_name, None) if cog else None
+            if loop is None:
+                state = "❌ cog non chargé"
+            elif loop.is_running():
+                state = "✅ en cours"
+            else:
+                state = "❌ ARRÊTÉE (redémarre le bot)"
+            lines.append(f"**{label}** : {state}")
+
         # --- Doublons (nom strictement identique) ---
         role_counts = {}
         for role in guild.roles:

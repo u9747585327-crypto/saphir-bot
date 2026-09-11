@@ -453,6 +453,14 @@ class Prison(commands.Cog):
     async def before_check_releases(self):
         await self.bot.wait_until_ready()
 
+    @check_releases.error
+    async def check_releases_error(self, error: Exception):
+        # Sans ce handler, une seule exception arretait la boucle pour de bon : plus
+        # aucune liberation automatique, les membres restaient a Alcatraz indefiniment,
+        # et discord.py ne le signalait que dans son logger interne (invisible ici).
+        print(f"[!] check_releases a plante ({type(error).__name__}: {error}) -- redemarrage de la boucle")
+        self.check_releases.restart()
+
 
 async def setup(bot):
     await bot.add_cog(Prison(bot))
