@@ -39,6 +39,7 @@ INITIAL_COGS = [
     "cogs.funchat",
     "cogs.brawlstars",
     "cogs.diagnostic",
+    "cogs.serverdump",
     "cogs.help",
     "cogs.setupall",
 ]
