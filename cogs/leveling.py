@@ -442,5 +442,141 @@ class Leveling(commands.Cog):
         await handle_app_error(interaction, error, command_label="niveau/classement")
 
 
+    # ------------------------------------------------------------------ #
+    #  Crédit manuel d'heures (rattrapage)
+    # ------------------------------------------------------------------ #
+
+    async def _credit_hours(self, guild: discord.Guild, targets: list, heures: float, avec_xp: bool) -> list:
+        """Crédite des heures de vocal (et l'XP correspondante) à plusieurs membres d'un coup.
+        Le barème est celui de voice_tick — moyenne de VOICE_XP_MIN..VOICE_XP_MAX par tick —
+        pour que le rattrapage vaille exactement ce qu'une vraie session aurait rapporté.
+        Retourne les lignes de rapport. Aucune annonce dans le salon de niveaux : un crédit
+        groupé le spammerait, le récapitulatif suffit."""
+        seconds = int(round(heures * 3600))
+        ticks = seconds // VOICE_TICK_SECONDS
+        xp_gain = ticks * (VOICE_XP_MIN + VOICE_XP_MAX) // 2 if avec_xp else 0
+
+        data = await aload_json(LEVELS_DATA_FILE, {})
+        settings = await aload_json(GUILD_SETTINGS_FILE, {})
+
+        lines, level_ups = [], []
+        for member in targets:
+            old_level = self._get_user(data, guild.id, member.id)["level"]
+            leveled_to = self._apply_xp(data, member, xp_gain, voice_seconds=seconds)
+            entry = self._get_user(data, guild.id, member.id)
+            progression = (
+                f"niveau {old_level} → **{entry['level']}**" if leveled_to else f"niveau {entry['level']}"
+            )
+            lines.append(f"• {member.mention} — 🎙️ **{entry['voice_seconds'] / 3600:.1f}h** au total · {progression}")
+            if leveled_to:
+                level_ups.append((member, leveled_to))
+
+        await asave_json(LEVELS_DATA_FILE, data)
+
+        refused = 0
+        for member, level in level_ups:
+            if not await self._sync_level_roles(member, level, settings):
+                refused += 1
+
+        header = f"➕ **{heures:g}h** ajoutée(s)"
+        if avec_xp:
+            header += f" avec **{xp_gain} XP**"
+        else:
+            header += " **sans XP** (le classement ne bouge pas, seules les heures affichées changent)"
+        report = [header, ""] + lines
+        if refused:
+            report.append(
+                f"\n⚠️ **{refused} membre(s) n'ont PAS reçu leur nouveau rôle de niveau** : "
+                f"monte le rôle {guild.me.top_role.mention} au-dessus des rôles de niveau."
+            )
+        return report
+
+    @app_commands.command(
+        name="ajouter-heures",
+        description="Ajoute des heures de vocal à un membre (rattrapage manuel)",
+    )
+    @app_commands.describe(
+        membre="Membre à créditer",
+        heures="Heures à ajouter (décimales acceptées, ex : 2.5)",
+        avec_xp="Créditer aussi l'XP que ces heures auraient rapportée (oui par défaut)",
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def ajouter_heures(
+        self,
+        interaction: discord.Interaction,
+        membre: discord.Member,
+        heures: app_commands.Range[float, 0.1, 500.0],
+        avec_xp: bool = True,
+    ):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        report = await self._credit_hours(interaction.guild, [membre], float(heures), avec_xp)
+        embed = discord.Embed(
+            title="🎙️ Heures ajoutées",
+            description="\n".join(report),
+            color=discord.Color(COLORS["success"]),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(
+        name="ajouter-heures-top",
+        description="Ajoute des heures de vocal aux premiers du classement, d'un seul coup",
+    )
+    @app_commands.describe(
+        heures="Heures à ajouter à chacun (décimales acceptées, ex : 2.5)",
+        nombre="Combien de membres depuis le haut du classement (10 par défaut)",
+        avec_xp="Créditer aussi l'XP que ces heures auraient rapportée (oui par défaut)",
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def ajouter_heures_top(
+        self,
+        interaction: discord.Interaction,
+        heures: app_commands.Range[float, 0.1, 500.0],
+        nombre: app_commands.Range[int, 1, 25] = 10,
+        avec_xp: bool = True,
+    ):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        guild = interaction.guild
+
+        data = await aload_json(LEVELS_DATA_FILE, {})
+        guild_data = data.get(str(guild.id), {})
+        ranking = sorted(guild_data.items(), key=lambda kv: total_xp(kv[1]), reverse=True)
+
+        # on suit le même ordre que le classement affiché, en sautant les comptes qui ont
+        # quitté le serveur (ils y apparaissent en « Utilisateur <id> », les créditer n'aurait
+        # aucun sens) jusqu'à en avoir `nombre` de valides
+        targets = []
+        for user_id, _entry in ranking:
+            member = guild.get_member(int(user_id))
+            if member is None or member.bot:
+                continue
+            targets.append(member)
+            if len(targets) >= nombre:
+                break
+
+        if not targets:
+            await interaction.followup.send(
+                "Personne dans le classement pour l'instant — utilise `/ajouter-heures` pour créditer un membre précis.",
+                ephemeral=True,
+            )
+            return
+
+        report = await self._credit_hours(guild, targets, float(heures), avec_xp)
+        embed = discord.Embed(
+            title=f"🎙️ Heures ajoutées au top {len(targets)}",
+            description="\n".join(report),
+            color=discord.Color(COLORS["success"]),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @ajouter_heures.error
+    @ajouter_heures_top.error
+    async def ajouter_heures_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        await handle_app_error(
+            interaction, error,
+            perm_message="Seul un administrateur peut ajouter des heures.",
+            command_label="ajouter-heures",
+        )
+
+
 async def setup(bot):
     await bot.add_cog(Leveling(bot))
