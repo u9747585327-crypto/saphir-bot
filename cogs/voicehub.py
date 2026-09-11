@@ -155,6 +155,12 @@ class MemberPickSelect(discord.ui.Select):
         if self.action == "mute":
             new_state = not member.voice.mute
             await member.edit(mute=new_state)
+            cog = interaction.client.get_cog("VoiceHub")
+            if cog is not None:
+                if new_state:
+                    cog.panel_muted[member.id] = self.channel.id
+                else:
+                    cog.panel_muted.pop(member.id, None)
             verb = "rendu muet" if new_state else "démute"
             await interaction.response.send_message(f"🔇 {member.display_name} a été {verb}.", ephemeral=True)
         elif self.action == "exclude":
@@ -214,6 +220,10 @@ class VoiceHub(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.spawn_cooldowns = {}
+        # mutes poses via le bouton "Muet" du panneau : {member_id: channel_id}. Sert a
+        # rendre le mute LOCAL au salon -- des que le membre change de salon vocal, on le
+        # demute. Un mute serveur classique le suivrait partout, ce que l'auteur ne veut pas.
+        self.panel_muted = {}
         bot.add_view(VoiceControlView())
 
     @app_commands.command(
@@ -294,6 +304,18 @@ class VoiceHub(commands.Cog):
 
             try:
                 await new_channel.send(embed=build_control_embed(member), view=VoiceControlView())
+            except discord.HTTPException:
+                pass
+
+        # demute local : si un membre mute via le panneau rejoint un AUTRE salon vocal, on
+        # retire son mute serveur (le mute ne devait valoir que dans le salon d'origine).
+        # S'il est deconnecte (after.channel is None) on le garde en memoire et on demutera
+        # a sa prochaine connexion ailleurs -- on ne peut pas editer l'etat vocal hors salon.
+        muted_channel_id = self.panel_muted.get(member.id)
+        if muted_channel_id is not None and after.channel is not None and after.channel.id != muted_channel_id:
+            self.panel_muted.pop(member.id, None)
+            try:
+                await member.edit(mute=False, reason="Demute automatique (changement de salon)")
             except discord.HTTPException:
                 pass
 
