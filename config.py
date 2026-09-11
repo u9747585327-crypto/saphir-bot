@@ -12,7 +12,7 @@ SCAN_DIR = "data/scans"
 
 # nom du rôle donné automatiquement à l'arrivée d'un membre, utilisé seulement si aucun rôle
 # n'a été choisi via /set-role-membre (doit déjà exister sur le serveur pour servir de secours)
-AUTO_ROLE_NAME = "Membre"
+AUTO_ROLE_NAME = "MEMBER"
 
 # fichier où sont stockés les réglages par serveur (ex : rôle Membre choisi via /set-role-membre)
 GUILD_SETTINGS_FILE = "data/guild_settings.json"
@@ -73,24 +73,22 @@ LEVEL_ROLES = [
 # du plus haut rang au plus bas — noms en police grasse sans-serif (rendue nativement
 # par Discord, aucune police externe requise)
 HIERARCHY_ROLES = [
-    ("「🜲・👑 𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」", 0xF0C258, {"administrator": True}),
-    ("「🜲・𝗖𝗼-𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」", 0xE74C3C, {
+    ("OWNER", 0xE74C3C, {"administrator": True}),
+    ("ADMIN", 0x3498DB, {
         "ban_members": True, "kick_members": True, "manage_roles": True, "manage_channels": True,
         "manage_guild": True, "moderate_members": True, "manage_messages": True,
         "mute_members": True, "deafen_members": True, "move_members": True,
     }),
-    ("「🜲・𝗖𝗼𝗺𝗺𝗮𝗻𝗱𝗮𝗻𝘁」", 0x9B59B6, {
+    ("MODERATOR", 0xF1C40F, {
         "kick_members": True, "moderate_members": True, "manage_messages": True,
         "mute_members": True, "deafen_members": True, "move_members": True,
     }),
-    ("「🜲・𝗔𝗱𝗺𝗶𝗻 𝗩𝗼𝗰𝗮𝗹」", 0x3498DB, {"mute_members": True, "deafen_members": True, "move_members": True}),
-    ("「🜲・𝗔𝗱𝗺𝗶𝗻 𝗖𝗵𝗮𝘁」", 0x1ABC9C, {"manage_messages": True}),
-    ("「🜲・✨ 𝗠𝗲𝗺𝗯𝗿𝗲」", 0xC9C3E0, {}),
+    ("MEMBER", 0x2ECC71, {}),
 ]
 
 # rangs de la hiérarchie qui doivent voir Alcatraz et les Logs (en plus du bypass
 # automatique des détenteurs de la permission Administrateur)
-STAFF_ROLE_NAMES = ["「🜲・👑 𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」", "「🜲・𝗖𝗼-𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」", "「🜲・𝗖𝗼𝗺𝗺𝗮𝗻𝗱𝗮𝗻𝘁」"]
+STAFF_ROLE_NAMES = ["OWNER", "ADMIN", "MODERATOR"]
 
 # hub d'administration : catégorie + salon de commandes réservé à tout rang au-dessus de
 # Membre (donc HIERARCHY_ROLES sans son dernier élément), + salon expliquant la hiérarchie

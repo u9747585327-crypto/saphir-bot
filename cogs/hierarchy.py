@@ -39,12 +39,15 @@ PERM_LABELS = {
 # migration ponctuelle : anciens noms de rôles (avant l'ajout du style 「🜲・...」)
 # vers leur équivalent stylé actuel. Sert à /nettoyage-roles et /reset-roles.
 LEGACY_ROLE_MIGRATIONS = [
-    ("🌟 Fondateur", "「🜲・👑 𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」"),
-    ("Co-Fondateur", "「🜲・𝗖𝗼-𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」"),
-    ("Commandant", "「🜲・𝗖𝗼𝗺𝗺𝗮𝗻𝗱𝗮𝗻𝘁」"),
-    ("Admin Vocal", "「🜲・𝗔𝗱𝗺𝗶𝗻 𝗩𝗼𝗰𝗮𝗹」"),
-    ("Admin Chat", "「🜲・𝗔𝗱𝗺𝗶𝗻 𝗖𝗵𝗮𝘁」"),
-    ("✨ Membre", "「🜲・✨ 𝗠𝗲𝗺𝗯𝗿𝗲」"),
+    # anciens rangs (plein texte puis stylés 「🜲・...」) -> nouveaux noms simples
+    ("🌟 Fondateur", "OWNER"),
+    ("「🜲・👑 𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」", "OWNER"),
+    ("Co-Fondateur", "ADMIN"),
+    ("「🜲・𝗖𝗼-𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」", "ADMIN"),
+    ("Commandant", "MODERATOR"),
+    ("「🜲・𝗖𝗼𝗺𝗺𝗮𝗻𝗱𝗮𝗻𝘁」", "MODERATOR"),
+    ("✨ Membre", "MEMBER"),
+    ("「🜲・✨ 𝗠𝗲𝗺𝗯𝗿𝗲」", "MEMBER"),
     ("🌱 Débutant", "「🜲・🌱 𝗗𝗲𝗯𝘂𝘁𝗮𝗻𝘁」"),
     ("🌿 Actif", "「🜲・🌿 𝗔𝗰𝘁𝗶𝗳」"),
     ("🌳 Vétéran", "「🜲・🌳 𝗩𝗲𝘁𝗲𝗿𝗮𝗻」"),
@@ -170,7 +173,7 @@ class Hierarchy(commands.Cog):
 
     @app_commands.command(
         name="setup-roles",
-        description="Crée la hiérarchie de rôles (Fondateur → Membre) et les rôles Perm Jail/Perm Unjail",
+        description="Crée la hiérarchie de rôles (OWNER → MEMBER) et les rôles Perm Jail/Perm Unjail",
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_roles(self, interaction: discord.Interaction):

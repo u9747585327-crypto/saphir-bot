@@ -5,6 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from cogs._shared import handle_app_error
+from storage import aload_json, asave_json
 from services.setup_kit import (
     ensure_category,
     ensure_role,
@@ -15,6 +16,7 @@ from services.setup_kit import (
 )
 from config import (
     COLORS,
+    GUILD_SETTINGS_FILE,
     VOICE_HUB_CATEGORY_NAME,
     VOICE_HUB_CHANNEL_NAME,
     VOICE_HUB_INFO_CHANNEL_NAME,
@@ -46,8 +48,14 @@ async def run_setup(bot, guild: discord.Guild) -> list:
     if category is None:
         return report
 
-    _hub, line = await ensure_voice_channel(guild, VOICE_HUB_CHANNEL_NAME, category=category)
+    hub, line = await ensure_voice_channel(guild, VOICE_HUB_CHANNEL_NAME, category=category)
     report.append(line)
+    # on memorise l'ID du hub : le listener le repere par ID, pas par nom, pour survivre
+    # a un renommage (renommer le salon cassait silencieusement la creation de salons)
+    if hub is not None:
+        settings = await aload_json(GUILD_SETTINGS_FILE, {})
+        settings.setdefault(str(guild.id), {})["voice_hub_channel_id"] = hub.id
+        await asave_json(GUILD_SETTINGS_FILE, settings)
 
     info_channel, line = await ensure_text_channel(
         guild, VOICE_HUB_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites(guild)
@@ -237,8 +245,20 @@ class VoiceHub(commands.Cog):
     ):
         guild = member.guild
 
+        settings = await aload_json(GUILD_SETTINGS_FILE, {})
+        hub_id = settings.get(str(guild.id), {}).get("voice_hub_channel_id")
+
+        def _is_hub(channel):
+            # par ID d'abord (resiste au renommage), sinon repli sur le nom exact pour les
+            # serveurs configures avant l'ajout de cet ID
+            if channel is None:
+                return False
+            if hub_id is not None:
+                return channel.id == hub_id
+            return channel.name == VOICE_HUB_CHANNEL_NAME
+
         # joined the hub -> spawn a personal channel
-        if after.channel and after.channel.name == VOICE_HUB_CHANNEL_NAME and before.channel != after.channel:
+        if _is_hub(after.channel) and before.channel != after.channel:
             # anti-spam : on ignore les allers-retours trop rapprochés dans le hub
             now = time.time()
             if now - self.spawn_cooldowns.get(member.id, 0) < SPAWN_COOLDOWN_SECONDS:
@@ -279,7 +299,7 @@ class VoiceHub(commands.Cog):
 
         # left a temp channel -> delete it once empty
         if before.channel and before.channel.category and before.channel.category.name == VOICE_HUB_CATEGORY_NAME:
-            if before.channel.name != VOICE_HUB_CHANNEL_NAME and len(before.channel.members) == 0:
+            if not _is_hub(before.channel) and len(before.channel.members) == 0:
                 try:
                     await before.channel.delete(reason="Salon vocal temporaire vide")
                 except discord.NotFound:
