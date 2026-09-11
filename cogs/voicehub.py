@@ -249,6 +249,30 @@ class VoiceHub(commands.Cog):
             command_label="setup-vocal",
         )
 
+    @app_commands.command(
+        name="definir-hub-vocal",
+        description="Choisis le salon vocal qui cree les salons perso (utile s'il a ete renomme)",
+    )
+    @app_commands.describe(salon="Le salon vocal que les membres rejoindront pour obtenir leur propre salon")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def definir_hub_vocal(self, interaction: discord.Interaction, salon: discord.VoiceChannel):
+        settings = await aload_json(GUILD_SETTINGS_FILE, {})
+        settings.setdefault(str(interaction.guild.id), {})["voice_hub_channel_id"] = salon.id
+        await asave_json(GUILD_SETTINGS_FILE, settings)
+        await interaction.response.send_message(
+            f"✅ **{salon.name}** est maintenant le salon-hub : rejoins-le pour créer un salon perso.\n"
+            "Tu peux supprimer les autres salons « Créer un salon » en double s'il y en a.",
+            ephemeral=True,
+        )
+
+    @definir_hub_vocal.error
+    async def definir_hub_vocal_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        await handle_app_error(
+            interaction, error,
+            perm_message="Seul un administrateur peut definir le hub vocal.",
+            command_label="definir-hub-vocal",
+        )
+
     @commands.Cog.listener()
     async def on_voice_state_update(
         self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
