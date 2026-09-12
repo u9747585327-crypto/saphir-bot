@@ -4,7 +4,7 @@ from discord.ext import commands
 
 from cogs._shared import SaphirModal
 from cogs.prison import parse_duration
-from config import COLORS, LOG_CHANNELS
+from config import COLORS
 
 MAX_TIMEOUT_DAYS = 28
 
@@ -166,7 +166,8 @@ class Moderation(commands.Cog):
         self.bot = bot
 
     async def _log(self, guild: discord.Guild, embed: discord.Embed):
-        channel = discord.utils.get(guild.text_channels, name=LOG_CHANNELS["moderation"])
+        from cogs.logs import resolve_log_channel
+        channel = await resolve_log_channel(self.bot, guild, "moderation")
         if channel:
             try:
                 await channel.send(embed=embed)

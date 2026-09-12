@@ -26,6 +26,21 @@ def normalize(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
+def find_text_channel(guild, name):
+    """Retrouve un salon texte par son nom, tolérant au style : nom exact d'abord, sinon
+    égalité du nom normalisé (emoji/brackets/casse/espaces ignorés). Sert à toutes les
+    recherches « poster dans tel salon connu » pour ne pas casser quand le salon a été
+    renommé au style 「 」 ou porte encore un ancien nom."""
+    channel = discord.utils.get(guild.text_channels, name=name)
+    if channel is not None:
+        return channel
+    target = normalize(name)
+    for ch in guild.text_channels:
+        if normalize(ch.name) == target:
+            return ch
+    return None
+
+
 def _find_equivalent(items, names):
     """Premier objet dont le nom normalisé est ÉGAL à l'un des noms donnés (le nom canonique
     + ses alias). Égalité stricte et non « contient » : « niveaux » ≠ « infos-niveaux », mais

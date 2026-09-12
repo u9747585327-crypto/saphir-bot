@@ -5,8 +5,20 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import COLORS, GUILD_SETTINGS_FILE, LOG_CHANNELS, LOGS_CATEGORY_NAME, STAFF_ROLE_NAMES
-from services.setup_kit import adopt_category, adopt_text_channel, hidden_overwrites
+from services.setup_kit import adopt_category, adopt_text_channel, find_text_channel, hidden_overwrites
 from storage import aload_json, asave_json
+
+
+async def resolve_log_channel(bot, guild, key):
+    """Retrouve un salon de log par son ID mémorisé (fiable), avec repli sur le nom
+    normalisé. Utilisable par les autres cogs (modération, anti-raid) pour ne pas
+    dupliquer la logique de recherche."""
+    settings = await aload_json(GUILD_SETTINGS_FILE, {})
+    cid = settings.get(str(guild.id), {}).get("log_channel_ids", {}).get(key)
+    channel = guild.get_channel(cid) if cid else None
+    if channel is None:
+        channel = find_text_channel(guild, LOG_CHANNELS[key])
+    return channel
 
 
 async def run_setup(bot, guild: discord.Guild) -> list:
@@ -68,8 +80,8 @@ class Logs(commands.Cog):
             ids = settings.get(str(guild.id), {}).get("log_channel_ids", {})
             self._log_ids[guild.id] = ids
         channel = guild.get_channel(ids.get(key)) if ids.get(key) else None
-        if channel is None:  # ID absent/périmé -> repli sur le nom
-            channel = discord.utils.get(guild.text_channels, name=LOG_CHANNELS[key])
+        if channel is None:  # ID absent/périmé -> repli sur le nom (tolérant au style)
+            channel = find_text_channel(guild, LOG_CHANNELS[key])
         return channel
 
     # ------------------------------------------------------------------ #

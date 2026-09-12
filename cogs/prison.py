@@ -23,6 +23,7 @@ from services.setup_kit import (
     adopt_text_channel,
     adopt_voice_channel,
     ensure_role,
+    find_text_channel,
     post_once,
     readonly_overwrites,
 )
@@ -272,7 +273,7 @@ class Prison(commands.Cog):
     # ------------------------------------------------------------------ #
 
     async def _announce(self, guild: discord.Guild, embed: discord.Embed):
-        channel = discord.utils.get(guild.text_channels, name=PRISON_SANCTIONS_CHANNEL_NAME)
+        channel = find_text_channel(guild, PRISON_SANCTIONS_CHANNEL_NAME)
         if channel:
             try:
                 return await channel.send(embed=embed)

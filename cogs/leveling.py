@@ -17,7 +17,7 @@ from config import (
     LEVELS_INFO_CHANNEL_NAME,
 )
 from cogs._shared import handle_app_error
-from services.setup_kit import adopt_category, adopt_text_channel, post_once, readonly_overwrites
+from services.setup_kit import adopt_category, adopt_text_channel, find_text_channel, post_once, readonly_overwrites
 from storage import aload_json, asave_json
 
 TEXT_XP_MIN, TEXT_XP_MAX = 15, 25
@@ -74,7 +74,7 @@ class Leveling(commands.Cog):
         return leveled_to
 
     async def _announce_level_up(self, member: discord.Member, new_level: int, fallback_channel):
-        channel = discord.utils.get(member.guild.text_channels, name=LEVEL_UP_CHANNEL_NAME) or fallback_channel
+        channel = find_text_channel(member.guild, LEVEL_UP_CHANNEL_NAME) or fallback_channel
         if channel is None:
             return
         embed = discord.Embed(

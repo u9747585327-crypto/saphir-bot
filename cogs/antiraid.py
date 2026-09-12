@@ -13,7 +13,6 @@ from config import (
     ANTIRAID_MODE_DURATION,
     COLORS,
     GUILD_SETTINGS_FILE,
-    LOG_CHANNELS,
 )
 from storage import aload_json, asave_json
 
@@ -53,11 +52,9 @@ class AntiRaid(commands.Cog):
         gs["antiraid_lockdown"] = conf["lockdown"]
         await asave_json(GUILD_SETTINGS_FILE, settings)
 
-    def _mod_log(self, guild: discord.Guild):
-        return discord.utils.get(guild.text_channels, name=LOG_CHANNELS["moderation"])
-
     async def _alert(self, guild: discord.Guild, title: str, description: str, color_key: str = "danger"):
-        channel = self._mod_log(guild)
+        from cogs.logs import resolve_log_channel
+        channel = await resolve_log_channel(self.bot, guild, "moderation")
         if channel is None:
             return
         embed = discord.Embed(title=title, description=description, color=discord.Color(COLORS[color_key]))
