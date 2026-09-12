@@ -17,7 +17,7 @@ from config import (
     PRISON_CATEGORY_NAME,
     STAFF_ROLE_NAMES,
 )
-from services.setup_kit import ensure_category, ensure_text_channel, post_once, readonly_overwrites
+from services.setup_kit import adopt_role, ensure_category, ensure_text_channel, post_once, readonly_overwrites
 from storage import aload_json, asave_json
 
 # libellés lisibles pour les clés de permission utilisées dans HIERARCHY_ROLES,
@@ -38,26 +38,26 @@ PERM_LABELS = {
 
 # migration ponctuelle : anciens noms de rôles (avant l'ajout du style 「🜲・...」)
 # vers leur équivalent stylé actuel. Sert à /nettoyage-roles et /reset-roles.
+# migration manuelle (/nettoyage-roles) : anciens rôles SANS équivalent normalisé direct
+# (Commandant, Admin Vocal/Chat) -> nouveau rang. Les rôles qui ne changent que de style
+# (Fondateur, Admin, Membre...) sont déjà repris automatiquement par adopt_role dans
+# /setup-roles ; on les liste ici surtout pour que /reset-roles les connaisse.
 LEGACY_ROLE_MIGRATIONS = [
-    # anciens rangs (plein texte puis stylés 「🜲・...」) -> nouveaux noms simples
-    ("🌟 Fondateur", "OWNER"),
-    ("「🜲・👑 𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」", "OWNER"),
-    ("Co-Fondateur", "ADMIN"),
-    ("「🜲・𝗖𝗼-𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」", "ADMIN"),
-    ("Commandant", "MODERATOR"),
-    ("「🜲・𝗖𝗼𝗺𝗺𝗮𝗻𝗱𝗮𝗻𝘁」", "MODERATOR"),
-    ("✨ Membre", "MEMBER"),
-    ("「🜲・✨ 𝗠𝗲𝗺𝗯𝗿𝗲」", "MEMBER"),
-    # anciens Admin Vocal / Admin Chat (plus de rang dédié) -> repliés sur MODERATOR
-    ("「🜲・𝗔𝗱𝗺𝗶𝗻 𝗩𝗼𝗰𝗮𝗹」", "MODERATOR"),
-    ("「🜲・𝗔𝗱𝗺𝗶𝗻 𝗖𝗵𝗮𝘁」", "MODERATOR"),
-    # anciens rôles de niveau stylés -> nouveaux noms simples (le palier OSINT est supprimé,
-    # aucune cible : son rôle éventuel reste à retirer à la main)
-    ("「🜲・🌱 𝗗𝗲𝗯𝘂𝘁𝗮𝗻𝘁」", "🌱 Débutant"),
-    ("「🜲・🌿 𝗔𝗰𝘁𝗶𝗳」", "🌿 Actif"),
-    ("「🜲・🌳 𝗩𝗲𝘁𝗲𝗿𝗮𝗻」", "🌳 Vétéran"),
-    ("「🜲・⭐ 𝗘𝗹𝗶𝘁𝗲」", "⭐ Élite"),
-    ("「🜲・👑 𝗟𝗲𝗴𝗲𝗻𝗱𝗲」", "👑 Légende"),
+    ("🌟 Fondateur", "𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿"),
+    ("「🜲・👑 𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」", "𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿"),
+    ("「🜲・𝗖𝗼-𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」", "𝗖𝗼-𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿"),
+    # anciens rangs fusionnés dans Modérateur
+    ("Commandant", "𝗠𝗼𝗱𝗲𝗿𝗮𝘁𝗲𝘂𝗿"),
+    ("「🜲・𝗖𝗼𝗺𝗺𝗮𝗻𝗱𝗮𝗻𝘁」", "𝗠𝗼𝗱𝗲𝗿𝗮𝘁𝗲𝘂𝗿"),
+    ("「🜲・𝗔𝗱𝗺𝗶𝗻 𝗩𝗼𝗰𝗮𝗹」", "𝗠𝗼𝗱𝗲𝗿𝗮𝘁𝗲𝘂𝗿"),
+    ("「🜲・𝗔𝗱𝗺𝗶𝗻 𝗖𝗵𝗮𝘁」", "𝗠𝗼𝗱𝗲𝗿𝗮𝘁𝗲𝘂𝗿"),
+    ("「🜲・✨ 𝗠𝗲𝗺𝗯𝗿𝗲」", "𝗠𝗲𝗺𝗯𝗿𝗲"),
+    # anciens rôles de niveau stylés -> nouveaux noms en gras (palier OSINT supprimé)
+    ("「🜲・🌱 𝗗𝗲𝗯𝘂𝘁𝗮𝗻𝘁」", "🌱 𝗗𝗲𝗯𝘂𝘁𝗮𝗻𝘁"),
+    ("「🜲・🌿 𝗔𝗰𝘁𝗶𝗳」", "🌿 𝗔𝗰𝘁𝗶𝗳"),
+    ("「🜲・🌳 𝗩𝗲𝘁𝗲𝗿𝗮𝗻」", "🌳 𝗩𝗲𝘁𝗲𝗿𝗮𝗻"),
+    ("「🜲・⭐ 𝗘𝗹𝗶𝘁𝗲」", "⭐ 𝗘𝗹𝗶𝘁𝗲"),
+    ("「🜲・👑 𝗟𝗲𝗴𝗲𝗻𝗱𝗲」", "👑 𝗟𝗲𝗴𝗲𝗻𝗱𝗲"),
     ("⛓️ Perm Jail", "「🜲・⛓️ Perm Jail」"),
     ("🔓 Perm Unjail", "「🜲・🔓 Perm Unjail」"),
 ]
@@ -96,26 +96,18 @@ class Hierarchy(commands.Cog):
         report = []
         created_roles = {}
 
-        # 1. hiérarchie de rôles avec permissions natives cumulées
+        # 1. hiérarchie de rôles avec permissions natives cumulées. On ADOPTE un rôle
+        # existant même s'il porte un ancien nom/style (« Fondateur », stylé 「🜲・...」) :
+        # il est renommé au nom canonique sans perdre ses membres, donc pas de doublon.
         for name, color, perms in HIERARCHY_ROLES:
-            role = discord.utils.get(guild.roles, name=name)
             permissions = discord.Permissions(**perms)
-            try:
-                if role is None:
-                    role = await guild.create_role(
-                        name=name, color=discord.Color(color), hoist=True, mentionable=False,
-                        permissions=permissions, reason="Configuration hiérarchie (Saphir)",
-                    )
-                    report.append(f"✅ Rôle créé : {name}")
-                else:
-                    await role.edit(
-                        color=discord.Color(color), hoist=True, permissions=permissions,
-                        reason="Configuration hiérarchie (Saphir)",
-                    )
-                    report.append(f"🔄 Rôle mis à jour : {name}")
+            role, line = await adopt_role(
+                guild, name, color=color, hoist=True, permissions=permissions,
+                reason="Configuration hiérarchie (Saphir)",
+            )
+            report.append(line)
+            if role is not None:
                 created_roles[name] = role
-            except discord.Forbidden:
-                report.append(f"❌ Rôle refusé (permissions) : {name}")
 
         # 2. ordre de préséance : du plus haut (index 0) au plus bas
         try:

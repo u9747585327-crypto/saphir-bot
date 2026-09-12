@@ -15,7 +15,7 @@ async def run_setup(bot, guild: discord.Guild) -> list:
 
     category, line = await adopt_category(
         guild, COMMUNITY_CATEGORY_NAME,
-        keywords=["communaute", "community", "accueil", "lobby"],
+        keywords=["info", "infos", "communaute", "community", "accueil"],
     )
     report.append(line)
     if category is None:
@@ -30,36 +30,54 @@ async def run_setup(bot, guild: discord.Guild) -> list:
         report.append(line)
         channels[name] = channel
 
-    # message d'accueil dans le salon de bienvenue (posté une seule fois)
-    welcome = channels.get("👋・bienvenue")
-    if welcome is not None:
-        embed = discord.Embed(
-            title="👋 Bienvenue !",
-            description=(
-                "Ravi de t'avoir parmi nous. Fais un tour des salons, présente-toi dans "
-                "**💬・général**, et gagne des niveaux en discutant et en vocal "
-                "(voir **📊・infos-niveaux**).\n\nAmuse-toi bien 💠"
-            ),
-            color=discord.Color(COLORS["saphir"]),
-        )
-        if await post_once(welcome, bot.user.id, embed, "Saphir · Bienvenue"):
-            report.append("📝 Message de bienvenue posté")
-
-    # règlement (posté une seule fois, à compléter par le staff)
+    # règlement (posté une seule fois), style clair et complet
     rules = channels.get("📜・règlement")
     if rules is not None:
         embed = discord.Embed(
-            title="📜 Règlement",
-            description=(
-                "**1.** Respecte tout le monde — pas d'insultes, de harcèlement ni de haine.\n"
-                "**2.** Pas de spam, de pub non autorisée ni de contenu choquant.\n"
-                "**3.** Reste dans le bon salon pour chaque sujet.\n"
-                "**4.** Pas de partage de données personnelles (les tiennes ou celles des autres).\n"
-                "**5.** Les décisions du staff font foi.\n\n"
-                "_Le staff peut compléter ce règlement._"
-            ),
+            title="📜 Règlement de la communauté",
+            description="En rejoignant et en restant sur ce serveur, tu acceptes l'ensemble de ces règles.",
             color=discord.Color(COLORS["saphir"]),
         )
+        embed.add_field(
+            name="1 · Respect",
+            value="Reste courtois avec tout le monde. Insultes, harcèlement, menaces, propos "
+                  "haineux, racistes, sexistes, homophobes ou discriminatoires sont **interdits** et sanctionnés.",
+            inline=False,
+        )
+        embed.add_field(
+            name="2 · Spam & publicité",
+            value="Pas de flood, de spam de mentions, ni de publicité (autres serveurs, liens, "
+                  "invitations, DM non sollicités) sans accord du staff.",
+            inline=False,
+        )
+        embed.add_field(
+            name="3 · Salons",
+            value="Écris dans les bons salons et reste dans le sujet.",
+            inline=False,
+        )
+        embed.add_field(
+            name="4 · Sécurité",
+            value="⚠️ Le staff ne te contactera **jamais en premier en DM**. Méfie-toi des "
+                  "usurpateurs, vérifie toujours les rôles, et ne partage pas tes informations personnelles.",
+            inline=False,
+        )
+        embed.add_field(
+            name="5 · Contenu interdit",
+            value="Aucun contenu NSFW, choquant, doxxing, malware, ni contenu illégal.",
+            inline=False,
+        )
+        embed.add_field(
+            name="6 · Discord",
+            value="Tu dois avoir **13 ans minimum** et respecter les Conditions d'utilisation de Discord.",
+            inline=False,
+        )
+        embed.add_field(
+            name="7 · Sanctions",
+            value="Selon la gravité : avertissement, exclusion (kick) ou bannissement. "
+                  "Les décisions du staff sont finales.",
+            inline=False,
+        )
+        embed.set_footer(text="Merci de faire de cette communauté un endroit sûr et agréable 💙")
         if await post_once(rules, bot.user.id, embed, "Saphir · Règlement"):
             report.append("📝 Règlement posté")
 
@@ -71,26 +89,26 @@ class Community(commands.Cog):
         self.bot = bot
 
     @app_commands.command(
-        name="setup-communaute",
-        description="Crée la catégorie Communauté et ses salons (annonces, général, jeux, partage...)",
+        name="setup-infos",
+        description="Crée la catégorie INFOS (annonces + règlement en lecture seule)",
     )
     @app_commands.checks.has_permissions(administrator=True)
-    async def setup_communaute(self, interaction: discord.Interaction):
+    async def setup_infos(self, interaction: discord.Interaction):
         await interaction.response.defer(thinking=True, ephemeral=True)
         report = await run_setup(self.bot, interaction.guild)
         embed = discord.Embed(
-            title="💠 Configuration Communauté",
+            title="📢 Configuration INFOS",
             description="\n".join(report),
             color=discord.Color(COLORS["saphir"]),
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @setup_communaute.error
-    async def setup_communaute_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+    @setup_infos.error
+    async def setup_infos_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         await handle_app_error(
             interaction, error,
             perm_message="Seul un administrateur peut utiliser cette commande.",
-            command_label="setup-communaute",
+            command_label="setup-infos",
         )
 
 

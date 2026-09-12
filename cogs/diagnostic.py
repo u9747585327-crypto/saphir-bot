@@ -2,7 +2,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-import cogs.brawlstars as brawlstars
 import cogs.funchat as funchat
 import storage
 from cogs._shared import handle_app_error
@@ -45,7 +44,6 @@ class Diagnostic(commands.Cog):
 
         lines.append(f"**Stockage** : {'✅ MongoDB connecté' if storage.is_connected() else '⚠️ Fichiers locaux (perdus au redémarrage sur Render)'}")
         lines.append(f"**Chat IA** : {'✅ Groq connecté' if funchat.is_ai_enabled() else '⚠️ Réponses toutes faites (pas de GROQ_API_KEY)'}")
-        lines.append(f"**Brawl Stars** : {'✅ Clé API configurée' if brawlstars.is_configured() else '⚠️ Non configuré (pas de BRAWLSTARS_API_KEY)'}")
 
         # état des boucles de fond : une tasks.loop morte ne se voit nulle part ailleurs
         # (c'est ce qui avait arrêté le comptage des heures vocales en silence)
@@ -53,6 +51,7 @@ class Diagnostic(commands.Cog):
             ("XP vocal (heures)", "Leveling", "voice_tick"),
             ("Classement auto", "Leveling", "leaderboard_refresh"),
             ("Libérations Alcatraz", "Prison", "check_releases"),
+            ("Compteurs stats", "Stats", "refresh_stats"),
         ):
             cog = self.bot.get_cog(cog_name)
             loop = getattr(cog, loop_name, None) if cog else None
@@ -104,7 +103,9 @@ class Diagnostic(commands.Cog):
 
         lines.append(f"🎧 Hub vocal — catégorie {_check(category_names, 'vocal')}, salon {_check(channel_names, 'creerunsalon')}")
 
-        hierarchy_keywords = ["owner", "admin", "moderator", "member"]
+        lines.append(f"📈 Statistiques — catégorie {_check(category_names, 'statistique')}")
+
+        hierarchy_keywords = ["fondateur", "cofondateur", "admin", "moderateur", "membre"]
         hierarchy_found = sum(1 for kw in hierarchy_keywords if _any_contains(role_names, kw))
         lines.append(
             f"🎖️ Hiérarchie — {hierarchy_found}/{len(hierarchy_keywords)} rangs détectés, "

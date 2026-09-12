@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from cogs import brawlstars, community, honeypot, logs, voicehub
+from cogs import community, honeypot, logs, stats, voicehub
 from cogs._shared import handle_app_error
 from config import COLORS
 
@@ -27,14 +27,14 @@ STEPS = [
     #    La migration/suppression des anciens rôles n'est PAS automatique — elle reste dans la
     #    commande manuelle /nettoyage-roles, à lancer volontairement si un jour tu le veux.
     ("setup-roles", lambda bot, g: _cog_setup(bot, "Hierarchy", g)),
-    # 2. les salons, catégorie par catégorie (Communauté d'abord : le honeypot s'y range)
-    ("setup-communaute", lambda bot, g: community.run_setup(bot, g)),
+    # 2. les salons, catégorie par catégorie (INFOS d'abord : le honeypot s'y range)
+    ("setup-infos", lambda bot, g: community.run_setup(bot, g)),
     ("setup-logs", lambda bot, g: logs.run_setup(bot, g)),
     ("setup-prison", lambda bot, g: _cog_setup(bot, "Prison", g)),
     ("setup-niveaux", lambda bot, g: _cog_setup(bot, "Leveling", g)),
     ("setup-vocal", lambda bot, g: voicehub.run_setup(bot, g)),
     ("setup-honeypot", lambda bot, g: honeypot.run_setup(bot, g)),
-    ("setup-brawlstars", lambda bot, g: brawlstars.run_setup(bot, g)),
+    ("setup-stats", lambda bot, g: stats.run_setup(bot, g)),
     ("setup-administration", lambda bot, g: _cog_setup(bot, "Hierarchy", g, "run_setup_administration")),
     # 4. 2e passage : applique l'accès staff aux catégories qui viennent d'être créées
     ("setup-roles (2e passage)", lambda bot, g: _cog_setup(bot, "Hierarchy", g)),

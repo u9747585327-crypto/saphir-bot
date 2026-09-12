@@ -118,6 +118,42 @@ async def ensure_voice_channel(guild, name, *, category=None, overwrites=None, r
         return None, f"❌ Salon vocal refusé (permissions) : {name}"
 
 
+async def adopt_role(guild, name, *, color=None, hoist=False, permissions=None, reason=REASON):
+    """ensure_role, mais reconnaît un rôle existant même si son nom a changé de style/casse
+    (ex : « Fondateur », « 𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿 », « 「🜲・👑 𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿」 » ont le même nom normalisé)
+    et le RENOMME au nom canonique — donc pas de doublon et aucun membre perdu. La
+    correspondance est une égalité EXACTE du nom normalisé (pas un « contient »), pour ne
+    pas confondre « Admin » avec « Admin Chat »."""
+    target = normalize(name)
+    role = discord.utils.get(guild.roles, name=name)
+    if role is None:
+        for r in guild.roles:
+            if not r.managed and r.name != "@everyone" and normalize(r.name) == target:
+                role = r
+                break
+    try:
+        if role is None:
+            kwargs = {"name": name, "hoist": hoist, "mentionable": False, "reason": reason}
+            if color is not None:
+                kwargs["color"] = discord.Color(color)
+            if permissions is not None:
+                kwargs["permissions"] = permissions
+            role = await guild.create_role(**kwargs)
+            return role, f"✅ Rôle créé : {name}"
+        edits = {"hoist": hoist, "reason": reason}
+        renamed = role.name != name
+        if renamed:
+            edits["name"] = name
+        if color is not None:
+            edits["color"] = discord.Color(color)
+        if permissions is not None:
+            edits["permissions"] = permissions
+        await role.edit(**edits)
+        return role, (f"🔁 Rôle adopté et renommé : {name}" if renamed else f"🔄 Rôle mis à jour : {name}")
+    except discord.Forbidden:
+        return None, f"❌ Rôle refusé (permissions) : {name}"
+
+
 async def adopt_category(guild, name, *, keywords=(), overwrites=None, reason=REASON):
     """Comme ensure_category, mais si aucune catégorie ne porte le nom exact, on cherche une
     catégorie existante proche (par mot-clé) et on la RENOMME vers `name` au lieu d'en créer

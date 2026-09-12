@@ -12,7 +12,7 @@ SCAN_DIR = "data/scans"
 
 # nom du rôle donné automatiquement à l'arrivée d'un membre, utilisé seulement si aucun rôle
 # n'a été choisi via /set-role-membre (doit déjà exister sur le serveur pour servir de secours)
-AUTO_ROLE_NAME = "MEMBER"
+AUTO_ROLE_NAME = "𝗠𝗲𝗺𝗯𝗿𝗲"
 
 # fichier où sont stockés les réglages par serveur (ex : rôle Membre choisi via /set-role-membre)
 GUILD_SETTINGS_FILE = "data/guild_settings.json"
@@ -20,19 +20,30 @@ GUILD_SETTINGS_FILE = "data/guild_settings.json"
 # nom du rôle donné pendant qu'un membre est connecté à un salon vocal (doit déjà exister)
 VOICE_ROLE_NAME = "En vocal"
 
-# communauté : catégorie d'accueil + salons de vie du serveur. Chaque entrée est
+# catégorie INFOS : annonces + règlement (lecture seule). Chaque entrée est
 # (nom canonique, lecture_seule, mots-clés) — les mots-clés servent à ADOPTER un salon
-# existant proche (le renommer au lieu d'en créer un doublon), voir services/setup_kit.py
-COMMUNITY_CATEGORY_NAME = "💠 COMMUNAUTÉ"
+# existant proche (le renommer au lieu d'en créer un doublon), voir services/setup_kit.py.
+# Pas de salon de discussion créé ici : le bot ne touche pas aux salons de chat existants.
+COMMUNITY_CATEGORY_NAME = "📢 INFOS"
 COMMUNITY_CHANNELS = [
     ("📢・annonces", True, ["annonce", "annonces", "news"]),
-    ("👋・bienvenue", True, ["bienvenue", "welcome", "arrivee"]),
     ("📜・règlement", True, ["reglement", "regles", "rules"]),
-    ("💬・général", False, ["general", "chat", "discussion", "tchat"]),
-    ("🎮・jeux", False, ["jeux", "gaming", "game", "zonedeguerre", "guerre"]),
-    ("📸・partage", False, ["partage", "screen", "media", "photos", "clips"]),
-    ("🤖・commandes-bot", False, ["commande", "commandes", "bot", "cmd"]),
 ]
+
+# compteurs statistiques : salons vocaux verrouillés dont le nom s'auto-met à jour.
+# {count} est remplacé par le nombre. Les IDs créés sont mémorisés dans guild_settings.
+STATS_CATEGORY_NAME = "📈 STATISTIQUES"
+STATS_CHANNELS = [
+    ("members", "👥 Membres : {count}", ["membre", "members"]),
+    ("boosts", "🚀 Boosts : {count}", ["boost", "boosts"]),
+]
+STATS_REFRESH_SECONDS = 600  # Discord limite le renommage d'un salon (~2 fois / 10 min)
+
+# anti-raid : détection d'une vague d'arrivées (join flood)
+ANTIRAID_JOIN_COUNT = 5            # nombre d'arrivées...
+ANTIRAID_JOIN_WINDOW = 10          # ...dans cette fenêtre (secondes) => raid détecté
+ANTIRAID_MODE_DURATION = 300       # durée du mode raid après détection (secondes)
+ANTIRAID_MIN_ACCOUNT_AGE_DAYS = 7  # pendant un raid, les comptes plus jeunes sont expulsés
 
 # hub de salons vocaux temporaires
 VOICE_HUB_CATEGORY_NAME = "🔊 VOCAL"
@@ -76,33 +87,38 @@ LEADERBOARD_REFRESH_SECONDS = 300
 # paliers de rôles automatiques : (niveau requis, nom du rôle, couleur)
 # stockés par ID dans data/guild_settings.json une fois créés, donc renommables sans risque
 LEVEL_ROLES = [
-    (5, "🌱 Débutant", 0x2ECC71),
-    (10, "🌿 Actif", 0x1ABC9C),
-    (20, "🌳 Vétéran", 0x3498DB),
-    (35, "⭐ Élite", 0x9B59B6),
-    (50, "👑 Légende", 0xF1C40F),
+    (5, "🌱 𝗗𝗲𝗯𝘂𝘁𝗮𝗻𝘁", 0x2ECC71),
+    (10, "🌿 𝗔𝗰𝘁𝗶𝗳", 0x1ABC9C),
+    (20, "🌳 𝗩𝗲𝘁𝗲𝗿𝗮𝗻", 0x3498DB),
+    (35, "⭐ 𝗘𝗹𝗶𝘁𝗲", 0x9B59B6),
+    (50, "👑 𝗟𝗲𝗴𝗲𝗻𝗱𝗲", 0xF1C40F),
 ]
 
 # hiérarchie de rôles visibles (hoist), permissions Discord natives cumulées,
 # du plus haut rang au plus bas — noms en police grasse sans-serif (rendue nativement
 # par Discord, aucune police externe requise)
 HIERARCHY_ROLES = [
-    ("OWNER", 0xE74C3C, {"administrator": True}),
-    ("ADMIN", 0x3498DB, {
+    ("𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿", 0x9B59B6, {"administrator": True}),
+    ("𝗖𝗼-𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿", 0x8E44AD, {
         "ban_members": True, "kick_members": True, "manage_roles": True, "manage_channels": True,
         "manage_guild": True, "moderate_members": True, "manage_messages": True,
         "mute_members": True, "deafen_members": True, "move_members": True,
     }),
-    ("MODERATOR", 0xF1C40F, {
+    ("𝗔𝗱𝗺𝗶𝗻", 0xE67E22, {
+        "ban_members": True, "kick_members": True, "manage_channels": True,
+        "moderate_members": True, "manage_messages": True,
+        "mute_members": True, "deafen_members": True, "move_members": True,
+    }),
+    ("𝗠𝗼𝗱𝗲𝗿𝗮𝘁𝗲𝘂𝗿", 0xF1C40F, {
         "kick_members": True, "moderate_members": True, "manage_messages": True,
         "mute_members": True, "deafen_members": True, "move_members": True,
     }),
-    ("MEMBER", 0x2ECC71, {}),
+    ("𝗠𝗲𝗺𝗯𝗿𝗲", 0x2ECC71, {}),
 ]
 
 # rangs de la hiérarchie qui doivent voir Alcatraz et les Logs (en plus du bypass
 # automatique des détenteurs de la permission Administrateur)
-STAFF_ROLE_NAMES = ["OWNER", "ADMIN", "MODERATOR"]
+STAFF_ROLE_NAMES = ["𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿", "𝗖𝗼-𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿", "𝗔𝗱𝗺𝗶𝗻", "𝗠𝗼𝗱𝗲𝗿𝗮𝘁𝗲𝘂𝗿"]
 
 # hub d'administration : catégorie + salon de commandes réservé à tout rang au-dessus de
 # Membre (donc HIERARCHY_ROLES sans son dernier élément), + salon expliquant la hiérarchie
