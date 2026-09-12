@@ -26,12 +26,14 @@ def normalize(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
-def _find_by_keywords(items, keywords):
-    """Premier objet (catégorie/salon) dont le nom normalisé contient un des mots-clés."""
-    normalized_keywords = [normalize(k) for k in keywords if k]
+def _find_equivalent(items, names):
+    """Premier objet dont le nom normalisé est ÉGAL à l'un des noms donnés (le nom canonique
+    + ses alias). Égalité stricte et non « contient » : « niveaux » ≠ « infos-niveaux », mais
+    « niveaux », « 📊・niveaux » et « 「 🎉 」 niveaux » ont tous le même nom normalisé, donc
+    sont reconnus comme le même salon quel que soit leur style/emoji."""
+    targets = {normalize(n) for n in names if n and normalize(n)}
     for item in items:
-        name = normalize(item.name)
-        if any(kw and kw in name for kw in normalized_keywords):
+        if normalize(item.name) in targets:
             return item
     return None
 
@@ -155,42 +157,69 @@ async def adopt_role(guild, name, *, color=None, hoist=False, permissions=None, 
 
 
 async def adopt_category(guild, name, *, keywords=(), overwrites=None, reason=REASON):
-    """Comme ensure_category, mais si aucune catégorie ne porte le nom exact, on cherche une
-    catégorie existante proche (par mot-clé) et on la RENOMME vers `name` au lieu d'en créer
-    une seconde. Évite les doublons quand une catégorie a juste un autre emoji/style."""
-    existing = discord.utils.get(guild.categories, name=name)
-    if existing is None and keywords:
-        candidate = _find_by_keywords(guild.categories, keywords)
-        if candidate is not None:
-            try:
-                await candidate.edit(name=name, reason=reason)
-                if overwrites:
-                    await candidate.edit(overwrites=overwrites, reason=reason)
-                return candidate, f"🔁 Catégorie adoptée et renommée : {name}"
-            except discord.Forbidden:
-                return None, f"❌ Catégorie non renommable (permissions) : {name}"
+    """Comme ensure_category, mais reconnaît une catégorie existante qui porte le même nom à
+    un style/emoji près (nom normalisé égal à `name` ou à un des `keywords` alias) et la
+    RENOMME vers `name` — pas de doublon. Ex : `keywords=["appel"]` fait adopter « 🎧 · Appel »
+    comme « 🔊 VOCAL »."""
+    candidate = _find_equivalent(guild.categories, [name, *keywords])
+    if candidate is not None:
+        try:
+            edits = {"reason": reason}
+            renamed = candidate.name != name
+            if renamed:
+                edits["name"] = name
+            if overwrites:
+                edits["overwrites"] = overwrites
+            await candidate.edit(**edits)
+            return candidate, (f"🔁 Catégorie adoptée : {name}" if renamed else f"= Catégorie déjà présente : {name}")
+        except discord.Forbidden:
+            return None, f"❌ Catégorie non modifiable (permissions) : {name}"
     return await ensure_category(guild, name, overwrites=overwrites, reason=reason)
 
 
 async def adopt_text_channel(guild, name, *, category=None, keywords=(), overwrites=None, reason=REASON):
-    """ensure_text_channel + adoption par mot-clé (renomme un salon proche au lieu de dupliquer),
-    et déplacement dans `category`. On ne cherche le candidat que dans la catégorie cible si
-    elle est fournie, sinon partout — pour ne pas happer un salon d'une autre section."""
-    existing = discord.utils.get(guild.text_channels, name=name)
-    if existing is None and keywords:
-        pool = category.text_channels if category is not None else guild.text_channels
-        candidate = _find_by_keywords(pool, keywords)
-        if candidate is not None:
-            try:
-                await candidate.edit(name=name, reason=reason)
-                if category is not None and candidate.category != category:
-                    await candidate.edit(category=category, reason=reason)
-                if overwrites:
-                    await candidate.edit(overwrites=overwrites, reason=reason)
-                return candidate, f"🔁 Salon adopté et renommé : {name}"
-            except discord.Forbidden:
-                return None, f"❌ Salon non renommable (permissions) : {name}"
+    """ensure_text_channel + adoption : reconnaît un salon existant de même nom à un style/emoji
+    près (nom normalisé égal à `name` ou à un alias), le RENOMME et le DÉPLACE dans `category`
+    — pas de doublon, historique gardé. La recherche est sur tout le serveur (le salon peut
+    être encore dans son ancienne catégorie)."""
+    candidate = _find_equivalent(guild.text_channels, [name, *keywords])
+    if candidate is not None:
+        try:
+            edits = {"reason": reason}
+            renamed = candidate.name != name
+            if renamed:
+                edits["name"] = name
+            if category is not None and candidate.category != category:
+                edits["category"] = category
+            if overwrites:
+                edits["overwrites"] = overwrites
+            if len(edits) > 1:
+                await candidate.edit(**edits)
+            return candidate, (f"🔁 Salon adopté : {name}" if renamed else f"= Salon déjà présent : {name}")
+        except discord.Forbidden:
+            return None, f"❌ Salon non modifiable (permissions) : {name}"
     return await ensure_text_channel(guild, name, category=category, overwrites=overwrites, reason=reason)
+
+
+async def adopt_voice_channel(guild, name, *, category=None, keywords=(), overwrites=None, reason=REASON):
+    """ensure_voice_channel + adoption par nom normalisé (comme adopt_text_channel)."""
+    candidate = _find_equivalent(guild.voice_channels, [name, *keywords])
+    if candidate is not None:
+        try:
+            edits = {"reason": reason}
+            renamed = candidate.name != name
+            if renamed:
+                edits["name"] = name
+            if category is not None and candidate.category != category:
+                edits["category"] = category
+            if overwrites:
+                edits["overwrites"] = overwrites
+            if len(edits) > 1:
+                await candidate.edit(**edits)
+            return candidate, (f"🔁 Salon vocal adopté : {name}" if renamed else f"= Salon vocal déjà présent : {name}")
+        except discord.Forbidden:
+            return None, f"❌ Salon vocal non modifiable (permissions) : {name}"
+    return await ensure_voice_channel(guild, name, category=category, overwrites=overwrites, reason=reason)
 
 
 async def post_once(channel, bot_user_id: int, embed: discord.Embed, marker: str) -> bool:

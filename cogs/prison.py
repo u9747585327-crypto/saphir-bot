@@ -19,10 +19,10 @@ from config import (
 )
 from cogs._shared import SaphirModal
 from services.setup_kit import (
-    ensure_category,
+    adopt_category,
+    adopt_text_channel,
+    adopt_voice_channel,
     ensure_role,
-    ensure_text_channel,
-    ensure_voice_channel,
     post_once,
     readonly_overwrites,
 )
@@ -167,13 +167,15 @@ class Prison(commands.Cog):
             ),
         }
 
-        category, line = await ensure_category(guild, PRISON_CATEGORY_NAME, overwrites=overwrites)
+        category, line = await adopt_category(
+            guild, PRISON_CATEGORY_NAME, keywords=["alcatraz", "prison"], overwrites=overwrites
+        )
         report.append(line)
         if category is None:
             return report
 
-        _text_channel, line = await ensure_text_channel(
-            guild, PRISON_TEXT_CHANNEL, category=category, overwrites=overwrites
+        _text_channel, line = await adopt_text_channel(
+            guild, PRISON_TEXT_CHANNEL, category=category, keywords=["cellule"], overwrites=overwrites
         )
         report.append(line)
 
@@ -181,8 +183,9 @@ class Prison(commands.Cog):
         # (contrairement aux autres salons de la catégorie, où Exilé peut écrire)
         info_overwrites = readonly_overwrites(guild, exile_role)
 
-        info_channel, line = await ensure_text_channel(
-            guild, PRISON_INFO_CHANNEL_NAME, category=category, overwrites=info_overwrites
+        info_channel, line = await adopt_text_channel(
+            guild, PRISON_INFO_CHANNEL_NAME, category=category,
+            keywords=["infos-alcatraz", "infos-prison"], overwrites=info_overwrites
         )
         report.append(line)
 
@@ -201,13 +204,14 @@ class Prison(commands.Cog):
         # salon d'historique des sanctions, en lecture seule — séparé de la cellule pour
         # garder un journal propre des jail/libérations sans le mélanger aux messages des
         # membres exilés (qui, eux, peuvent écrire dans la cellule)
-        _sanctions, line = await ensure_text_channel(
-            guild, PRISON_SANCTIONS_CHANNEL_NAME, category=category, overwrites=info_overwrites
+        _sanctions, line = await adopt_text_channel(
+            guild, PRISON_SANCTIONS_CHANNEL_NAME, category=category,
+            keywords=["sanctions"], overwrites=info_overwrites
         )
         report.append(line)
 
-        _voice, line = await ensure_voice_channel(
-            guild, PRISON_VOICE_CHANNEL, category=category, overwrites=overwrites
+        _voice, line = await adopt_voice_channel(
+            guild, PRISON_VOICE_CHANNEL, category=category, keywords=["isolement"], overwrites=overwrites
         )
         report.append(line)
 

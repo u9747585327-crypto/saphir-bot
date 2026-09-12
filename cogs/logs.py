@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import COLORS, LOG_CHANNELS, LOGS_CATEGORY_NAME
-from services.setup_kit import ensure_category, ensure_text_channel, hidden_overwrites
+from services.setup_kit import adopt_category, adopt_text_channel, hidden_overwrites
 
 
 async def run_setup(bot, guild: discord.Guild) -> list:
@@ -13,13 +13,15 @@ async def run_setup(bot, guild: discord.Guild) -> list:
     report = []
     overwrites = hidden_overwrites(guild)  # invisible pour les membres
 
-    category, line = await ensure_category(guild, LOGS_CATEGORY_NAME, overwrites=overwrites)
+    category, line = await adopt_category(
+        guild, LOGS_CATEGORY_NAME, keywords=["logs", "log"], overwrites=overwrites
+    )
     report.append(line)
     if category is None:
         return report
 
     for channel_name in LOG_CHANNELS.values():
-        _channel, line = await ensure_text_channel(
+        _channel, line = await adopt_text_channel(
             guild, channel_name, category=category, overwrites=overwrites
         )
         report.append(line)

@@ -17,7 +17,7 @@ from config import (
     LEVELS_INFO_CHANNEL_NAME,
 )
 from cogs._shared import handle_app_error
-from services.setup_kit import ensure_category, ensure_text_channel, post_once, readonly_overwrites
+from services.setup_kit import adopt_category, adopt_text_channel, post_once, readonly_overwrites
 from storage import aload_json, asave_json
 
 TEXT_XP_MIN, TEXT_XP_MAX = 15, 25
@@ -219,14 +219,14 @@ class Leveling(commands.Cog):
         overwrites = readonly_overwrites(guild)  # lisible par tous, seul Saphir y poste
 
         # 0. catégorie qui regroupe les salons de niveaux
-        category, line = await ensure_category(guild, LEVELS_CATEGORY_NAME)
+        category, line = await adopt_category(guild, LEVELS_CATEGORY_NAME, keywords=["niveaux", "niveau", "levels", "level"])
         report.append(line)
         if category is None:
             return report
 
         # 1. salon d'annonce des passages de niveau
-        _announce, line = await ensure_text_channel(
-            guild, LEVEL_UP_CHANNEL_NAME, category=category, overwrites=overwrites
+        _announce, line = await adopt_text_channel(
+            guild, LEVEL_UP_CHANNEL_NAME, category=category, keywords=["niveaux", "levelup"], overwrites=overwrites
         )
         report.append(line)
 
@@ -301,8 +301,9 @@ class Leveling(commands.Cog):
             report.append("= Aucun rattrapage nécessaire (tout le monde a déjà ses rôles)")
 
         # 2.6. salon d'explication (paliers + commandes), posté une seule fois
-        info_channel, line = await ensure_text_channel(
-            guild, LEVELS_INFO_CHANNEL_NAME, category=category, overwrites=overwrites
+        info_channel, line = await adopt_text_channel(
+            guild, LEVELS_INFO_CHANNEL_NAME, category=category,
+            keywords=["infos-niveaux", "infoniveaux"], overwrites=overwrites
         )
         report.append(line)
 
@@ -323,8 +324,9 @@ class Leveling(commands.Cog):
             report.append("📝 Message d'explication posté")
 
         # 3. salon de classement en direct
-        lb_channel, line = await ensure_text_channel(
-            guild, LEADERBOARD_CHANNEL_NAME, category=category, overwrites=overwrites
+        lb_channel, line = await adopt_text_channel(
+            guild, LEADERBOARD_CHANNEL_NAME, category=category,
+            keywords=["classement", "leaderboard", "top"], overwrites=overwrites
         )
         report.append(line)
         if lb_channel is not None:

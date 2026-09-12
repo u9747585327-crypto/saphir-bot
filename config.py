@@ -10,6 +10,17 @@ COLORS = {
 
 SCAN_DIR = "data/scans"
 
+# --- style des noms de salons : 「 emoji 」 nom -------------------------------------------
+# Discord transforme les espaces normaux en tirets dans les salons texte (et met en
+# minuscules). On utilise l'espace Braille U+2800, que Discord conserve tel quel, pour
+# obtenir un vrai espacement « 「 🔥 」 annonces ». Astuce classique des serveurs aesthetic.
+_S = "⠀"
+
+
+def _ch(emoji: str, name: str) -> str:
+    return f"「{_S}{emoji}{_S}」{_S}{name}"
+
+
 # nom du rôle donné automatiquement à l'arrivée d'un membre, utilisé seulement si aucun rôle
 # n'a été choisi via /set-role-membre (doit déjà exister sur le serveur pour servir de secours)
 AUTO_ROLE_NAME = "𝗠𝗲𝗺𝗯𝗿𝗲"
@@ -26,8 +37,8 @@ VOICE_ROLE_NAME = "En vocal"
 # Pas de salon de discussion créé ici : le bot ne touche pas aux salons de chat existants.
 COMMUNITY_CATEGORY_NAME = "📢 INFOS"
 COMMUNITY_CHANNELS = [
-    ("📢・annonces", True, ["annonce", "annonces", "news"]),
-    ("📜・règlement", True, ["reglement", "regles", "rules"]),
+    (_ch("📢", "annonces"), True, ["annonce", "annonces", "news"]),
+    (_ch("📜", "règlement"), True, ["reglement", "regles", "rules"]),
 ]
 
 # compteurs statistiques : salons vocaux verrouillés dont le nom s'auto-met à jour.
@@ -47,41 +58,41 @@ ANTIRAID_MIN_ACCOUNT_AGE_DAYS = 7  # pendant un raid, les comptes plus jeunes so
 
 # hub de salons vocaux temporaires
 VOICE_HUB_CATEGORY_NAME = "🔊 VOCAL"
-VOICE_HUB_CHANNEL_NAME = "➕・Créer un salon"
-VOICE_HUB_INFO_CHANNEL_NAME = "🎧・infos-vocal"
+VOICE_HUB_CHANNEL_NAME = _ch("➕", "créer-un-salon")
+VOICE_HUB_INFO_CHANNEL_NAME = _ch("🎧", "infos-vocal")
 
-# nom exact du salon-piège anti-bot : quiconque y écrit est expulsé (placé dans la
-# catégorie Communauté au setup s'il elle existe)
-HONEYPOT_CHANNEL_NAME = "🍯・ne-pas-écrire-ici"
+# nom du salon-piège anti-bot : quiconque y écrit est expulsé (placé dans la catégorie
+# INFOS au setup si elle existe)
+HONEYPOT_CHANNEL_NAME = _ch("🍯", "ne-pas-écrire-ici")
 
 # prison (Alcatraz)
 PRISON_CATEGORY_NAME = "🔒 ALCATRAZ"
-PRISON_TEXT_CHANNEL = "💬・cellule"
-PRISON_VOICE_CHANNEL = "🔇 Isolement"
-PRISON_INFO_CHANNEL_NAME = "🔒・infos-alcatraz"
-PRISON_SANCTIONS_CHANNEL_NAME = "📋・sanctions"
+PRISON_TEXT_CHANNEL = _ch("💬", "cellule")
+PRISON_VOICE_CHANNEL = _ch("🔇", "isolement")
+PRISON_INFO_CHANNEL_NAME = _ch("🔒", "infos-alcatraz")
+PRISON_SANCTIONS_CHANNEL_NAME = _ch("📋", "sanctions")
 EXILE_ROLE_NAME = "⛓️ Exilé"
 PRISON_DATA_FILE = "data/prison.json"
 
 # logs serveur
 LOGS_CATEGORY_NAME = "📋 LOGS"
 LOG_CHANNELS = {
-    "join_leave": "📥・arrivées-départs",
-    "moderation": "🔨・modération",
-    "voice": "🎙️・vocal",
-    "profile": "✏️・pseudos-avatars",
-    "messages": "💬・messages",
-    "roles": "🎭・rôles",
-    "channels": "📁・salons",
-    "server": "⚙️・serveur",
+    "join_leave": _ch("📥", "arrivées-départs"),
+    "moderation": _ch("🔨", "modération"),
+    "voice": _ch("🎙️", "vocal"),
+    "profile": _ch("✏️", "pseudos-avatars"),
+    "messages": _ch("💬", "messages"),
+    "roles": _ch("🎭", "rôles"),
+    "channels": _ch("📁", "salons"),
+    "server": _ch("⚙️", "serveur"),
 }
 
 # niveaux (XP texte + vocal cumulés)
 LEVELS_DATA_FILE = "data/levels.json"
 LEVELS_CATEGORY_NAME = "📊 NIVEAUX"
-LEVEL_UP_CHANNEL_NAME = "🎉・niveaux"
-LEADERBOARD_CHANNEL_NAME = "🏆・classement"
-LEVELS_INFO_CHANNEL_NAME = "📊・infos-niveaux"
+LEVEL_UP_CHANNEL_NAME = _ch("🎉", "niveaux")
+LEADERBOARD_CHANNEL_NAME = _ch("🏆", "classement")
+LEVELS_INFO_CHANNEL_NAME = _ch("📊", "infos-niveaux")
 LEADERBOARD_REFRESH_SECONDS = 300
 
 # paliers de rôles automatiques : (niveau requis, nom du rôle, couleur)
@@ -123,8 +134,8 @@ STAFF_ROLE_NAMES = ["𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿", "𝗖𝗼-𝗙𝗼�
 # hub d'administration : catégorie + salon de commandes réservé à tout rang au-dessus de
 # Membre (donc HIERARCHY_ROLES sans son dernier élément), + salon expliquant la hiérarchie
 ADMIN_CATEGORY_NAME = "🛠️ ADMINISTRATION"
-ADMIN_COMMAND_CHANNEL_NAME = "🛠️・commandes-staff"
-ADMIN_INFO_CHANNEL_NAME = "📖・infos-rôles"
+ADMIN_COMMAND_CHANNEL_NAME = _ch("🛠️", "commandes-staff")
+ADMIN_INFO_CHANNEL_NAME = _ch("📖", "infos-rôles")
 
 # rôles de permission autonomes, indépendants du rang, pour débloquer /jail et /unjail
 PERM_JAIL_ROLE_NAME = "「🜲・⛓️ Perm Jail」"

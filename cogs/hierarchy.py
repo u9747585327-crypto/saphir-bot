@@ -17,7 +17,7 @@ from config import (
     PRISON_CATEGORY_NAME,
     STAFF_ROLE_NAMES,
 )
-from services.setup_kit import adopt_role, ensure_category, ensure_text_channel, post_once, readonly_overwrites
+from services.setup_kit import adopt_category, adopt_role, adopt_text_channel, ensure_category, ensure_text_channel, post_once, readonly_overwrites
 from storage import aload_json, asave_json
 
 # libellés lisibles pour les clés de permission utilisées dans HIERARCHY_ROLES,
@@ -200,7 +200,7 @@ class Hierarchy(commands.Cog):
         staff_role_names = [name for name, *_ in HIERARCHY_ROLES[:-1]]
         staff_roles = [r for n in staff_role_names if (r := discord.utils.get(guild.roles, name=n))]
 
-        category, line = await ensure_category(guild, ADMIN_CATEGORY_NAME)
+        category, line = await adopt_category(guild, ADMIN_CATEGORY_NAME, keywords=["administration", "admin", "staff"])
         report.append(line)
         if category is None:
             return report
@@ -210,14 +210,16 @@ class Hierarchy(commands.Cog):
         for role in staff_roles:
             command_overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
 
-        _command_channel, line = await ensure_text_channel(
-            guild, ADMIN_COMMAND_CHANNEL_NAME, category=category, overwrites=command_overwrites
+        _command_channel, line = await adopt_text_channel(
+            guild, ADMIN_COMMAND_CHANNEL_NAME, category=category,
+            keywords=["commandes-staff", "commandes"], overwrites=command_overwrites
         )
         report.append(line)
 
         # salon d'explication des rôles, visible par tout le monde (lecture seule)
-        info_channel, line = await ensure_text_channel(
-            guild, ADMIN_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites(guild)
+        info_channel, line = await adopt_text_channel(
+            guild, ADMIN_INFO_CHANNEL_NAME, category=category,
+            keywords=["infos-roles", "infos-role"], overwrites=readonly_overwrites(guild)
         )
         report.append(line)
 

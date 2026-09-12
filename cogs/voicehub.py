@@ -7,10 +7,10 @@ from discord.ext import commands
 from cogs._shared import handle_app_error
 from storage import aload_json, asave_json
 from services.setup_kit import (
-    ensure_category,
+    adopt_category,
+    adopt_text_channel,
+    adopt_voice_channel,
     ensure_role,
-    ensure_text_channel,
-    ensure_voice_channel,
     post_once,
     readonly_overwrites,
 )
@@ -47,7 +47,7 @@ async def run_setup(bot, guild: discord.Guild) -> list:
     _role, line = await ensure_role(guild, VOICE_ROLE_NAME)
     report.append(line)
 
-    category, line = await ensure_category(guild, VOICE_HUB_CATEGORY_NAME)
+    category, line = await adopt_category(guild, VOICE_HUB_CATEGORY_NAME, keywords=["vocal", "vocaux", "appel", "voice"])
     report.append(line)
     if category is None:
         return report
@@ -62,7 +62,10 @@ async def run_setup(bot, guild: discord.Guild) -> list:
     if isinstance(hub, discord.VoiceChannel):
         report.append(f"= Hub vocal déjà défini : {hub.name}")
     else:
-        hub, line = await ensure_voice_channel(guild, VOICE_HUB_CHANNEL_NAME, category=category)
+        hub, line = await adopt_voice_channel(
+            guild, VOICE_HUB_CHANNEL_NAME, category=category,
+            keywords=["creer-un-salon", "creer-ton-salon", "creerunsalon"],
+        )
         report.append(line)
 
     # on memorise l'ID du hub : le listener le repere par ID, pas par nom, pour survivre
@@ -71,8 +74,9 @@ async def run_setup(bot, guild: discord.Guild) -> list:
         guild_settings["voice_hub_channel_id"] = hub.id
         await asave_json(GUILD_SETTINGS_FILE, settings)
 
-    info_channel, line = await ensure_text_channel(
-        guild, VOICE_HUB_INFO_CHANNEL_NAME, category=category, overwrites=readonly_overwrites(guild)
+    info_channel, line = await adopt_text_channel(
+        guild, VOICE_HUB_INFO_CHANNEL_NAME, category=category,
+        keywords=["infos-vocal", "infos-vocaux"], overwrites=readonly_overwrites(guild)
     )
     report.append(line)
 

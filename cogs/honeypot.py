@@ -4,17 +4,18 @@ from discord.ext import commands
 
 from cogs._shared import handle_app_error
 from config import COMMUNITY_CATEGORY_NAME, HONEYPOT_CHANNEL_NAME, COLORS
-from services.setup_kit import ensure_text_channel, post_once
+from services.setup_kit import adopt_text_channel, post_once
 
 
 async def run_setup(bot, guild: discord.Guild) -> list:
     """Logique de /setup-honeypot, appelable aussi par /setup-tout."""
     report = []
     overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=True)}
-    # placer le piège dans la catégorie Communauté si elle a déjà été créée
+    # placer le piège dans la catégorie INFOS si elle a déjà été créée
     category = discord.utils.get(guild.categories, name=COMMUNITY_CATEGORY_NAME)
-    channel, line = await ensure_text_channel(
-        guild, HONEYPOT_CHANNEL_NAME, category=category, overwrites=overwrites
+    channel, line = await adopt_text_channel(
+        guild, HONEYPOT_CHANNEL_NAME, category=category,
+        keywords=["ne-pas-écrire-ici", "nepasecrireici", "honeypot"], overwrites=overwrites
     )
     report.append(line)
 
