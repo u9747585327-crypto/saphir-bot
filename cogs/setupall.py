@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from cogs import brawlstars, honeypot, logs, voicehub
+from cogs import brawlstars, community, honeypot, logs, voicehub
 from cogs._shared import handle_app_error
 from config import COLORS
 
@@ -22,7 +22,13 @@ async def _cog_setup(bot, cog_name: str, guild, method: str = "run_setup"):
 #    Alcatraz et Logs n'existent pas → d'où le second passage de setup-roles à la fin
 # Le chat IA n'apparaît pas ici : il n'a plus de salon dédié (il répond au ping partout).
 STEPS = [
+    # 1. créer les rôles cibles OWNER/ADMIN/MODERATOR/MEMBER
     ("setup-roles", lambda bot, g: _cog_setup(bot, "Hierarchy", g)),
+    # 2. migrer les membres des anciens rôles (stylés) vers les nouveaux, puis supprimer les
+    #    anciens — doit venir APRÈS setup-roles (les rôles cibles doivent exister)
+    ("migration-roles", lambda bot, g: _cog_setup(bot, "Hierarchy", g, "run_role_migration")),
+    # 3. les salons, catégorie par catégorie (Communauté d'abord : le honeypot s'y range)
+    ("setup-communaute", lambda bot, g: community.run_setup(bot, g)),
     ("setup-logs", lambda bot, g: logs.run_setup(bot, g)),
     ("setup-prison", lambda bot, g: _cog_setup(bot, "Prison", g)),
     ("setup-niveaux", lambda bot, g: _cog_setup(bot, "Leveling", g)),
@@ -30,6 +36,7 @@ STEPS = [
     ("setup-honeypot", lambda bot, g: honeypot.run_setup(bot, g)),
     ("setup-brawlstars", lambda bot, g: brawlstars.run_setup(bot, g)),
     ("setup-administration", lambda bot, g: _cog_setup(bot, "Hierarchy", g, "run_setup_administration")),
+    # 4. 2e passage : applique l'accès staff aux catégories qui viennent d'être créées
     ("setup-roles (2e passage)", lambda bot, g: _cog_setup(bot, "Hierarchy", g)),
 ]
 

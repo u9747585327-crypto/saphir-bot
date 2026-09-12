@@ -52,13 +52,23 @@ async def run_setup(bot, guild: discord.Guild) -> list:
     if category is None:
         return report
 
-    hub, line = await ensure_voice_channel(guild, VOICE_HUB_CHANNEL_NAME, category=category)
-    report.append(line)
+    # si un hub a deja ete defini (par un setup precedent ou via /definir-hub-vocal) et qu'il
+    # existe toujours, on le REUTILISE au lieu d'en recreer un -- sinon chaque /setup-vocal
+    # fabriquait un doublon quand le salon avait ete renomme/deplace hors du nom exact
+    settings = await aload_json(GUILD_SETTINGS_FILE, {})
+    guild_settings = settings.setdefault(str(guild.id), {})
+    existing_hub_id = guild_settings.get("voice_hub_channel_id")
+    hub = guild.get_channel(existing_hub_id) if existing_hub_id else None
+    if isinstance(hub, discord.VoiceChannel):
+        report.append(f"= Hub vocal déjà défini : {hub.name}")
+    else:
+        hub, line = await ensure_voice_channel(guild, VOICE_HUB_CHANNEL_NAME, category=category)
+        report.append(line)
+
     # on memorise l'ID du hub : le listener le repere par ID, pas par nom, pour survivre
     # a un renommage (renommer le salon cassait silencieusement la creation de salons)
-    if hub is not None:
-        settings = await aload_json(GUILD_SETTINGS_FILE, {})
-        settings.setdefault(str(guild.id), {})["voice_hub_channel_id"] = hub.id
+    if isinstance(hub, discord.VoiceChannel):
+        guild_settings["voice_hub_channel_id"] = hub.id
         await asave_json(GUILD_SETTINGS_FILE, settings)
 
     info_channel, line = await ensure_text_channel(

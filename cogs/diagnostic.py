@@ -1,6 +1,3 @@
-import re
-import unicodedata
-
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -10,15 +7,7 @@ import cogs.funchat as funchat
 import storage
 from cogs._shared import handle_app_error
 from config import COLORS, LEVEL_ROLES, LOG_CHANNELS
-
-
-def _normalize(text: str) -> str:
-    """Minuscules, sans accents, sans espaces/tirets/soulignés/emoji/déco — pour comparer
-    des noms qui ont pu changer de style/casse/accentuation sans perdre leur sens."""
-    text = unicodedata.normalize("NFKD", text)
-    text = "".join(c for c in text if not unicodedata.combining(c))
-    text = text.lower()
-    return re.sub(r"[^a-z0-9]", "", text)
+from services.setup_kit import normalize as _normalize
 
 
 def _any_contains(names, keyword) -> bool:
@@ -100,6 +89,8 @@ class Diagnostic(commands.Cog):
         # --- Fonctionnalités (recherche par mot-clé, insensible au style/accents/casse) ---
         lines.append("")
         lines.append("**Fonctionnalités** _(détection par mot-clé, tolère les changements de nom/style)_ :")
+
+        lines.append(f"💠 Communauté — catégorie {_check(category_names, 'communaute')}")
 
         lines.append(f"🔒 Prison — catégorie {_check(category_names, 'alcatraz')}, rôle Exilé {_check(role_names, 'exile')}")
 

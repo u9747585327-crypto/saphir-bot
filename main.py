@@ -27,6 +27,7 @@ INITIAL_COGS = [
     "cogs.scan",
     "cogs.autorole",
     "cogs.voicerole",
+    "cogs.community",
     "cogs.voicehub",
     "cogs.bringall",
     "cogs.honeypot",

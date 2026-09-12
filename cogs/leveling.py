@@ -246,11 +246,26 @@ class Leveling(commands.Cog):
                         reason="Récompense de niveau (Saphir)",
                     )
                     report.append(f"✅ Rôle créé : {name} (niveau {threshold})")
+                elif role.name != name or role.color.value != color:
+                    # le rôle existe (retrouvé par ID) mais avec un ancien nom/couleur :
+                    # on le met au thème sans perdre ses membres
+                    await role.edit(name=name, color=discord.Color(color), hoist=True,
+                                    reason="Mise au thème du rôle de niveau (Saphir)")
+                    report.append(f"🔄 Rôle mis au thème : {name} (niveau {threshold})")
                 else:
                     report.append(f"= Rôle déjà présent : {name} (niveau {threshold})")
                 level_role_ids[str(threshold)] = role.id
             except discord.Forbidden:
                 report.append(f"❌ Rôle refusé (permissions) : {name}")
+
+        # purge des paliers disparus de la config (ex : ancien palier OSINT/15) — sinon leur
+        # ID orphelin traîne dans les réglages et fausse le rattrapage
+        valid_thresholds = {str(t) for t, _n, _c in LEVEL_ROLES}
+        removed = [t for t in list(level_role_ids) if t not in valid_thresholds]
+        for t in removed:
+            level_role_ids.pop(t, None)
+        if removed:
+            report.append(f"🧹 {len(removed)} ancien(s) palier(s) retiré(s) des réglages : niveaux {', '.join(removed)}")
 
         # 2.5. rattrapage : la synchro des rôles ne se déclenche normalement que sur un
         # NOUVEAU passage de niveau (voir _apply_xp/_sync_level_roles) — un membre déjà
