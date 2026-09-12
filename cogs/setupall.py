@@ -4,37 +4,7 @@ from discord.ext import commands
 
 from cogs import community, honeypot, logs, stats, voicehub
 from cogs._shared import handle_app_error
-from config import (
-    ADMIN_CATEGORY_NAME,
-    COLORS,
-    COMMUNITY_CATEGORY_NAME,
-    EXILE_ROLE_NAME,
-    HIERARCHY_ROLES,
-    LEVEL_ROLES,
-    LEVELS_CATEGORY_NAME,
-    LOGS_CATEGORY_NAME,
-    PERM_JAIL_ROLE_NAME,
-    PERM_UNJAIL_ROLE_NAME,
-    PRISON_CATEGORY_NAME,
-    STATS_CATEGORY_NAME,
-    VOICE_HUB_CATEGORY_NAME,
-    VOICE_ROLE_NAME,
-)
-from services.setup_kit import normalize
-
-
-def _canonical_category_names() -> set:
-    return {normalize(n) for n in (
-        COMMUNITY_CATEGORY_NAME, LEVELS_CATEGORY_NAME, VOICE_HUB_CATEGORY_NAME,
-        PRISON_CATEGORY_NAME, LOGS_CATEGORY_NAME, ADMIN_CATEGORY_NAME, STATS_CATEGORY_NAME,
-    )}
-
-
-def _canonical_role_names() -> set:
-    names = [n for n, _c, _p in HIERARCHY_ROLES]
-    names += [n for _t, n, _c in LEVEL_ROLES]
-    names += [PERM_JAIL_ROLE_NAME, PERM_UNJAIL_ROLE_NAME, EXILE_ROLE_NAME, VOICE_ROLE_NAME]
-    return {normalize(n) for n in names}
+from config import COLORS
 
 
 async def _cog_setup(bot, cog_name: str, guild, method: str = "run_setup"):
@@ -85,51 +55,36 @@ async def _execute_steps(bot, guild) -> list:
     return summary
 
 
-async def _purge_extras(guild: discord.Guild) -> dict:
-    """Supprime tout ce qui ne fait pas partie de la structure Saphir : salons hors des
-    catégories canoniques (et catégories non canoniques), rôles non gérés. Protège
-    absolument : @everyone, les rôles gérés par une intégration (bots, boost), le rôle du
-    bot et tout rôle au-dessus de lui (non supprimables). À lancer APRÈS la configuration,
-    pour que les catégories/rôles Saphir existent déjà et soient conservés."""
-    cat_targets = _canonical_category_names()
-    role_targets = _canonical_role_names()
+async def _purge_all(guild: discord.Guild) -> dict:
+    """Efface TOUT pour repartir de zéro : tous les salons, toutes les catégories, et tous
+    les rôles supprimables. À lancer AVANT la reconstruction. Protège absolument (non
+    supprimables de toute façon) : @everyone, les rôles gérés par une intégration (bots,
+    boost), et tout rôle au-dessus du bot. Chaque suppression est isolée pour ne pas
+    s'arrêter sur un salon système (règles/annonces d'un serveur communautaire)."""
     stats = {"salons": 0, "categories": 0, "roles": 0}
 
-    # 1. salons hors d'une catégorie canonique (les salons temporaires du hub vivent dans
-    #    la catégorie VOCAL, donc canonique -> conservés)
     for channel in list(guild.channels):
         if isinstance(channel, discord.CategoryChannel):
             continue
-        cat = channel.category
-        if cat is not None and normalize(cat.name) in cat_targets:
-            continue
         try:
-            await channel.delete(reason="Reset serveur (Saphir)")
+            await channel.delete(reason="Reset serveur — repart de zéro (Saphir)")
             stats["salons"] += 1
         except discord.HTTPException:
             pass
 
-    # 2. catégories non canoniques (désormais vides)
     for category in list(guild.categories):
-        if normalize(category.name) in cat_targets:
-            continue
         try:
-            await category.delete(reason="Reset serveur (Saphir)")
+            await category.delete(reason="Reset serveur — repart de zéro (Saphir)")
             stats["categories"] += 1
         except discord.HTTPException:
             pass
 
-    # 3. rôles non gérés qui ne font pas partie de la structure
     me_top = guild.me.top_role
     for role in list(guild.roles):
-        if role.is_default() or role.managed:
-            continue
-        if role.position >= me_top.position:  # au-dessus du bot : non supprimable
-            continue
-        if normalize(role.name) in role_targets:
+        if role.is_default() or role.managed or role.position >= me_top.position:
             continue
         try:
-            await role.delete(reason="Reset serveur (Saphir)")
+            await role.delete(reason="Reset serveur — repart de zéro (Saphir)")
             stats["roles"] += 1
         except discord.HTTPException:
             pass
@@ -191,11 +146,12 @@ class SetupAll(commands.Cog):
         guild = interaction.guild
         view = ConfirmResetServer(interaction.user.id)
         await interaction.response.send_message(
-            "⚠️ **Attention — action irréversible.**\n"
-            "Je vais d'abord créer la structure Saphir (rôles + salons au thème), **puis supprimer "
-            "TOUS les autres salons** (leur historique de messages sera perdu) **et tous les autres "
-            "rôles** (les membres perdront ces rôles).\n\n"
-            "Sont **protégés** : les bots et leurs rôles, le boost, @everyone, le rôle de Saphir.\n\n"
+            "⚠️ **Attention — action irréversible : repart de ZÉRO.**\n"
+            "Je vais **supprimer TOUS les salons** (tout l'historique de messages sera perdu) "
+            "**et TOUS les rôles** (les membres perdront tous leurs rôles), puis reconstruire la "
+            "structure Saphir propre (rôles + salons au thème).\n\n"
+            "Sont **protégés** (non supprimables) : les bots et leurs rôles, le boost, @everyone, "
+            "le rôle de Saphir et les rôles au-dessus de lui.\n\n"
             "Continuer ?",
             view=view, ephemeral=True,
         )
@@ -204,16 +160,16 @@ class SetupAll(commands.Cog):
             await interaction.edit_original_response(content="Reset annulé — rien n'a été touché.", view=None)
             return
 
-        await interaction.edit_original_response(content="⏳ Configuration puis nettoyage en cours...", view=None)
-        summary = await _execute_steps(self.bot, guild)
-        purged = await _purge_extras(guild)
+        await interaction.edit_original_response(content="⏳ Suppression totale puis reconstruction en cours...", view=None)
+        purged = await _purge_all(guild)          # 1. on efface tout
+        summary = await _execute_steps(self.bot, guild)  # 2. on reconstruit de zéro
 
         embed = discord.Embed(
-            title="🧹 Serveur remis à zéro",
+            title="🧹 Serveur reconstruit de zéro",
             description=(
-                "**Structure Saphir :**\n" + "\n".join(summary) +
-                f"\n\n**Nettoyage :** 🗑️ {purged['salons']} salon(s), "
-                f"{purged['categories']} catégorie(s), {purged['roles']} rôle(s) supprimé(s)."
+                f"**Nettoyage :** 🗑️ {purged['salons']} salon(s), "
+                f"{purged['categories']} catégorie(s), {purged['roles']} rôle(s) supprimé(s).\n\n"
+                "**Structure Saphir recréée :**\n" + "\n".join(summary)
             ),
             color=discord.Color(COLORS["saphir"]),
         )
