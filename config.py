@@ -31,14 +31,23 @@ GUILD_SETTINGS_FILE = "data/guild_settings.json"
 # nom du rôle donné pendant qu'un membre est connecté à un salon vocal (doit déjà exister)
 VOICE_ROLE_NAME = "En vocal"
 
-# catégorie INFOS : annonces + règlement (lecture seule). Chaque entrée est
-# (nom canonique, lecture_seule, mots-clés) — les mots-clés servent à ADOPTER un salon
-# existant proche (le renommer au lieu d'en créer un doublon), voir services/setup_kit.py.
-# Pas de salon de discussion créé ici : le bot ne touche pas aux salons de chat existants.
-COMMUNITY_CATEGORY_NAME = "📢 INFOS"
-COMMUNITY_CHANNELS = [
+# deux catégories gérées par cogs/community.py. Chaque salon est (nom canonique,
+# lecture_seule, mots-clés) — les mots-clés servent à ADOPTER un salon existant proche
+# (le renommer au lieu d'en créer un doublon), voir services/setup_kit.py.
+#
+# INFOS : lecture seule (annonces + règlement).
+INFOS_CATEGORY_NAME = "📢 INFOS"
+INFOS_CHANNELS = [
     (_ch("📢", "annonces"), True, ["annonce", "annonces", "news"]),
     (_ch("📜", "règlement"), True, ["reglement", "regles", "rules"]),
+]
+# COMMUNAUTÉ : salons de discussion où les membres peuvent écrire.
+COMMUNITY_CATEGORY_NAME = "💬 COMMUNAUTÉ"
+COMMUNITY_CHANNELS = [
+    (_ch("💬", "général"), False, ["general", "chat", "discussion", "tchat"]),
+    (_ch("🎮", "jeux"), False, ["jeux", "gaming", "game"]),
+    (_ch("📸", "médias"), False, ["medias", "media", "partage", "screen", "clips"]),
+    (_ch("🤖", "commandes-bot"), False, ["commande", "commandes", "cmd"]),
 ]
 
 # compteurs statistiques : salons vocaux verrouillés dont le nom s'auto-met à jour.

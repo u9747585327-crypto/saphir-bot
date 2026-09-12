@@ -3,7 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from cogs._shared import handle_app_error
-from config import COMMUNITY_CATEGORY_NAME, HONEYPOT_CHANNEL_NAME, COLORS
+from config import INFOS_CATEGORY_NAME, HONEYPOT_CHANNEL_NAME, COLORS
 from services.setup_kit import adopt_text_channel, post_once
 
 
@@ -12,7 +12,7 @@ async def run_setup(bot, guild: discord.Guild) -> list:
     report = []
     overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=True)}
     # placer le piège dans la catégorie INFOS si elle a déjà été créée
-    category = discord.utils.get(guild.categories, name=COMMUNITY_CATEGORY_NAME)
+    category = discord.utils.get(guild.categories, name=INFOS_CATEGORY_NAME)
     channel, line = await adopt_text_channel(
         guild, HONEYPOT_CHANNEL_NAME, category=category,
         keywords=["ne-pas-écrire-ici", "nepasecrireici", "honeypot"], overwrites=overwrites

@@ -3,35 +3,50 @@ from discord import app_commands
 from discord.ext import commands
 
 from cogs._shared import handle_app_error
-from config import COLORS, COMMUNITY_CATEGORY_NAME, COMMUNITY_CHANNELS
-from services.setup_kit import adopt_category, adopt_text_channel, post_once, readonly_overwrites
+from config import (
+    COLORS,
+    COMMUNITY_CATEGORY_NAME,
+    COMMUNITY_CHANNELS,
+    INFOS_CATEGORY_NAME,
+    INFOS_CHANNELS,
+)
+from services.setup_kit import adopt_category, adopt_text_channel, normalize, post_once, readonly_overwrites
 
 
-async def run_setup(bot, guild: discord.Guild) -> list:
-    """Crée (ou adopte) la catégorie Communauté et ses salons de vie du serveur.
-    Appelable par /setup-communaute et par /setup-tout. N'efface aucun salon : les salons
-    proches déjà présents sont renommés/déplacés dans le thème, pas dupliqués."""
-    report = []
-
-    category, line = await adopt_category(
-        guild, COMMUNITY_CATEGORY_NAME,
-        keywords=["info", "infos", "communaute", "community", "accueil"],
-    )
+async def _build_category(guild, cat_name, cat_keywords, channel_specs, report) -> dict:
+    """Crée/adopte une catégorie et ses salons, renvoie {nom_canonique: salon}."""
+    category, line = await adopt_category(guild, cat_name, keywords=cat_keywords)
     report.append(line)
-    if category is None:
-        return report
-
     channels = {}
-    for name, readonly, keywords in COMMUNITY_CHANNELS:
+    if category is None:
+        return channels
+    for name, readonly, keywords in channel_specs:
         overwrites = readonly_overwrites(guild) if readonly else None
         channel, line = await adopt_text_channel(
             guild, name, category=category, keywords=keywords, overwrites=overwrites
         )
         report.append(line)
         channels[name] = channel
+    return channels
 
-    # règlement (posté une seule fois), style clair et complet
-    rules = channels.get("📜・règlement")
+
+async def run_setup(bot, guild: discord.Guild) -> list:
+    """Crée/adopte deux catégories : INFOS (annonces + règlement, lecture seule) et
+    COMMUNAUTÉ (salons de discussion où les membres écrivent). Appelable par /setup-infos et
+    /setup-tout. N'efface aucun salon : les salons proches sont renommés/déplacés, pas dupliqués."""
+    report = []
+
+    infos = await _build_category(
+        guild, INFOS_CATEGORY_NAME, ["info", "infos", "annonces"], INFOS_CHANNELS, report
+    )
+    await _build_category(
+        guild, COMMUNITY_CATEGORY_NAME,
+        ["communaute", "community", "chat", "general", "discussion", "accueil"],
+        COMMUNITY_CHANNELS, report,
+    )
+
+    # règlement (posté une seule fois dans le salon règlement d'INFOS), style clair et complet
+    rules = next((ch for nm, ch in infos.items() if normalize(nm) == "reglement"), None)
     if rules is not None:
         embed = discord.Embed(
             title="📜 Règlement de la communauté",
@@ -90,7 +105,7 @@ class Community(commands.Cog):
 
     @app_commands.command(
         name="setup-infos",
-        description="Crée la catégorie INFOS (annonces + règlement en lecture seule)",
+        description="Crée les catégories INFOS (annonces + règlement) et COMMUNAUTÉ (salons de discussion)",
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_infos(self, interaction: discord.Interaction):

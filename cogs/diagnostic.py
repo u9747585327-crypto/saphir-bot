@@ -89,7 +89,8 @@ class Diagnostic(commands.Cog):
         lines.append("")
         lines.append("**Fonctionnalités** _(détection par mot-clé, tolère les changements de nom/style)_ :")
 
-        lines.append(f"💠 Communauté — catégorie {_check(category_names, 'communaute')}")
+        lines.append(f"📢 Infos — catégorie {_check(category_names, 'infos')}")
+        lines.append(f"💬 Communauté — catégorie {_check(category_names, 'communaute')}")
 
         lines.append(f"🔒 Prison — catégorie {_check(category_names, 'alcatraz')}, rôle Exilé {_check(role_names, 'exile')}")
 
