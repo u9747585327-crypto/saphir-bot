@@ -4,8 +4,9 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from config import COLORS, LOG_CHANNELS, LOGS_CATEGORY_NAME
+from config import COLORS, GUILD_SETTINGS_FILE, LOG_CHANNELS, LOGS_CATEGORY_NAME
 from services.setup_kit import adopt_category, adopt_text_channel, hidden_overwrites
+from storage import aload_json, asave_json
 
 
 async def run_setup(bot, guild: discord.Guild) -> list:
@@ -20,11 +21,25 @@ async def run_setup(bot, guild: discord.Guild) -> list:
     if category is None:
         return report
 
-    for channel_name in LOG_CHANNELS.values():
-        _channel, line = await adopt_text_channel(
+    # on mémorise l'ID de chaque salon de log : les listeners le retrouvent par ID, pas par
+    # nom — sinon le moindre écart entre le nom stocké et le nom réel (style 「 」, espaces
+    # convertis par Discord…) faisait échouer la recherche et plus aucun log n'était envoyé
+    settings = await aload_json(GUILD_SETTINGS_FILE, {})
+    log_ids = settings.setdefault(str(guild.id), {}).setdefault("log_channel_ids", {})
+
+    for key, channel_name in LOG_CHANNELS.items():
+        channel, line = await adopt_text_channel(
             guild, channel_name, category=category, overwrites=overwrites
         )
         report.append(line)
+        if channel is not None:
+            log_ids[key] = channel.id
+
+    await asave_json(GUILD_SETTINGS_FILE, settings)
+    # invalide le cache mémoire du cog pour qu'il relise les nouveaux IDs
+    cog = bot.get_cog("Logs")
+    if cog is not None:
+        cog._log_ids.pop(guild.id, None)
     return report
 
 
@@ -38,6 +53,20 @@ def _trim(text: str, limit: int = 1000) -> str:
 class Logs(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # cache mémoire {guild_id: {key: channel_id}} pour ne pas relire les réglages à chaque
+        # évènement ; rempli à la demande, vidé par run_setup quand les salons changent
+        self._log_ids = {}
+
+    async def _channel_for(self, guild: discord.Guild, key: str):
+        ids = self._log_ids.get(guild.id)
+        if ids is None:
+            settings = await aload_json(GUILD_SETTINGS_FILE, {})
+            ids = settings.get(str(guild.id), {}).get("log_channel_ids", {})
+            self._log_ids[guild.id] = ids
+        channel = guild.get_channel(ids.get(key)) if ids.get(key) else None
+        if channel is None:  # ID absent/périmé -> repli sur le nom
+            channel = discord.utils.get(guild.text_channels, name=LOG_CHANNELS[key])
+        return channel
 
     # ------------------------------------------------------------------ #
     #  Setup
@@ -68,7 +97,7 @@ class Logs(commands.Cog):
     # ------------------------------------------------------------------ #
 
     async def _log(self, guild: discord.Guild, key: str, embed: discord.Embed):
-        channel = discord.utils.get(guild.text_channels, name=LOG_CHANNELS[key])
+        channel = await self._channel_for(guild, key)
         if channel:
             try:
                 await channel.send(embed=embed)
