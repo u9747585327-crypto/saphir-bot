@@ -122,16 +122,16 @@ HIERARCHY_ROLES = [
     ("𝗖𝗼-𝗙𝗼𝗻𝗱𝗮𝘁𝗲𝘂𝗿", 0x8E44AD, {
         "ban_members": True, "kick_members": True, "manage_roles": True, "manage_channels": True,
         "manage_guild": True, "moderate_members": True, "manage_messages": True,
-        "mute_members": True, "deafen_members": True, "move_members": True,
+        "mention_everyone": True, "mute_members": True, "deafen_members": True, "move_members": True,
     }),
     ("𝗔𝗱𝗺𝗶𝗻", 0xE67E22, {
         "ban_members": True, "kick_members": True, "manage_channels": True,
-        "moderate_members": True, "manage_messages": True,
+        "moderate_members": True, "manage_messages": True, "mention_everyone": True,
         "mute_members": True, "deafen_members": True, "move_members": True,
     }),
     ("𝗠𝗼𝗱𝗲𝗿𝗮𝘁𝗲𝘂𝗿", 0xF1C40F, {
         "kick_members": True, "moderate_members": True, "manage_messages": True,
-        "mute_members": True, "deafen_members": True, "move_members": True,
+        "mention_everyone": True, "mute_members": True, "deafen_members": True, "move_members": True,
     }),
     ("𝗠𝗲𝗺𝗯𝗿𝗲", 0x2ECC71, {}),
 ]

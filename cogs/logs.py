@@ -4,7 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from config import COLORS, GUILD_SETTINGS_FILE, LOG_CHANNELS, LOGS_CATEGORY_NAME
+from config import COLORS, GUILD_SETTINGS_FILE, LOG_CHANNELS, LOGS_CATEGORY_NAME, STAFF_ROLE_NAMES
 from services.setup_kit import adopt_category, adopt_text_channel, hidden_overwrites
 from storage import aload_json, asave_json
 
@@ -12,7 +12,11 @@ from storage import aload_json, asave_json
 async def run_setup(bot, guild: discord.Guild) -> list:
     """Logique de /setup-logs, appelable aussi par /setup-tout."""
     report = []
-    overwrites = hidden_overwrites(guild)  # invisible pour les membres
+    # invisible pour les membres, MAIS visible pour le staff (Fondateur, Co-Fondateur, Admin,
+    # Modérateur) — appliqué sur la catégorie ET chaque salon, sinon les salons gardaient une
+    # permission propre qui masquait les logs même au staff non-administrateur
+    staff_roles = [r for n in STAFF_ROLE_NAMES if (r := discord.utils.get(guild.roles, name=n))]
+    overwrites = hidden_overwrites(guild, *staff_roles)
 
     category, line = await adopt_category(
         guild, LOGS_CATEGORY_NAME, keywords=["logs", "log"], overwrites=overwrites
