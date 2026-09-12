@@ -19,9 +19,10 @@ from storage import aload_json, asave_json
 
 
 class AntiRaid(commands.Cog):
-    """Détecte les vagues d'arrivées (join flood) typiques d'un raid et réagit :
-    pendant un raid, les comptes trop récents qui arrivent sont expulsés et le staff est
-    alerté. Un mode /lockdown manuel expulse TOUTE nouvelle arrivée jusqu'à réouverture.
+    """Détecte les vagues d'arrivées (join flood) typiques d'un raid et ALERTE le staff —
+    sans jamais expulser automatiquement, pour que les vrais nouveaux comptes puissent
+    rejoindre. Le staff décide : /lockdown ferme le serveur (toute nouvelle arrivée
+    expulsée) jusqu'à /unlockdown.
 
     Réglages par serveur dans guild_settings : `antiraid_enabled` (défaut True) et
     `antiraid_lockdown` (défaut False). Ils sont mis en cache mémoire pour ne pas relire le
@@ -102,29 +103,21 @@ class AntiRaid(commands.Cog):
         while joins and now - joins[0] > ANTIRAID_JOIN_WINDOW:
             joins.popleft()
 
-        in_raid = now < self.raid_until[guild.id]
-
-        # déclenchement d'un raid : trop d'arrivées dans la fenêtre
-        if not in_raid and len(joins) >= ANTIRAID_JOIN_COUNT:
-            self.raid_until[guild.id] = now + ANTIRAID_MODE_DURATION
-            in_raid = True
+        # détection d'une vague d'arrivées : on ALERTE seulement, on n'expulse personne
+        # automatiquement — les vrais nouveaux comptes doivent pouvoir rejoindre. Le staff
+        # décide, et peut fermer le serveur avec /lockdown si c'est vraiment un raid.
+        already_alerted = now < self.raid_until[guild.id]
+        if not already_alerted and len(joins) >= ANTIRAID_JOIN_COUNT:
+            self.raid_until[guild.id] = now + ANTIRAID_MODE_DURATION  # anti-spam d'alerte
+            young = self._too_young(member)
             await self._alert(
-                guild, "🚨 Raid détecté",
-                f"**{len(joins)} arrivées en {ANTIRAID_JOIN_WINDOW}s.** Mode raid activé pour "
-                f"{ANTIRAID_MODE_DURATION // 60} min : les comptes de moins de "
-                f"{ANTIRAID_MIN_ACCOUNT_AGE_DAYS} jours qui arrivent sont expulsés.\n"
-                "Utilise `/lockdown` pour tout bloquer, `/antiraid` pour régler.",
+                guild, "🚨 Vague d'arrivées détectée",
+                f"**{len(joins)} arrivées en {ANTIRAID_JOIN_WINDOW}s.** Ça peut être un raid — "
+                "ou juste une pub qui marche. **Aucune expulsion automatique.**\n"
+                f"Le dernier compte arrivé est {'récent ⚠️' if young else 'ancien'}. "
+                "Si c'est un raid, ferme le serveur avec `/lockdown` (puis `/unlockdown`).",
+                color_key="gold",
             )
-
-        # en mode raid : on expulse les comptes trop récents
-        if in_raid and self._too_young(member):
-            if await self._remove(member, "Compte trop récent pendant un raid"):
-                await self._alert(
-                    guild, "👢 Compte expulsé (raid)",
-                    f"{member.mention} (`{member}`) — compte créé il y a moins de "
-                    f"{ANTIRAID_MIN_ACCOUNT_AGE_DAYS} jours, expulsé pendant le raid.",
-                    color_key="grey",
-                )
 
     # ------------------------------------------------------------------ #
     #  Commandes
@@ -149,13 +142,14 @@ class AntiRaid(commands.Cog):
             await self._save_conf(guild.id, enabled=False)
             msg = "⛔ Anti-raid **désactivé**."
         else:
-            in_raid = time.time() < self.raid_until[guild.id]
+            recent_alert = time.time() < self.raid_until[guild.id]
             msg = (
                 f"**Anti-raid** : {'✅ activé' if conf['enabled'] else '⛔ désactivé'}\n"
-                f"**Lockdown** : {'🔒 actif' if conf['lockdown'] else 'ouvert'}\n"
-                f"**Mode raid en cours** : {'🚨 oui' if in_raid else 'non'}\n\n"
-                f"Seuil : {ANTIRAID_JOIN_COUNT} arrivées / {ANTIRAID_JOIN_WINDOW}s · "
-                f"comptes < {ANTIRAID_MIN_ACCOUNT_AGE_DAYS} j expulsés pendant un raid."
+                f"**Lockdown** : {'🔒 actif (arrivées bloquées)' if conf['lockdown'] else 'ouvert'}\n"
+                f"**Alerte récente** : {'🚨 oui' if recent_alert else 'non'}\n\n"
+                f"Seuil d'alerte : {ANTIRAID_JOIN_COUNT} arrivées / {ANTIRAID_JOIN_WINDOW}s.\n"
+                "La détection **alerte seulement** — aucune expulsion automatique. "
+                "Les nouveaux comptes peuvent rejoindre. Utilise `/lockdown` pour tout bloquer en cas de vrai raid."
             )
 
         embed = discord.Embed(title="🛡️ Anti-raid", description=msg, color=discord.Color(COLORS["saphir"]))
