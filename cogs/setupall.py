@@ -22,12 +22,12 @@ async def _cog_setup(bot, cog_name: str, guild, method: str = "run_setup"):
 #    Alcatraz et Logs n'existent pas → d'où le second passage de setup-roles à la fin
 # Le chat IA n'apparaît pas ici : il n'a plus de salon dédié (il répond au ping partout).
 STEPS = [
-    # 1. créer les rôles cibles OWNER/ADMIN/MODERATOR/MEMBER
+    # 1. créer/réutiliser les rôles OWNER/ADMIN/MODERATOR/MEMBER. Ne supprime JAMAIS un rôle
+    #    existant : il est retrouvé par son nom et réutilisé, seuls les manquants sont créés.
+    #    La migration/suppression des anciens rôles n'est PAS automatique — elle reste dans la
+    #    commande manuelle /nettoyage-roles, à lancer volontairement si un jour tu le veux.
     ("setup-roles", lambda bot, g: _cog_setup(bot, "Hierarchy", g)),
-    # 2. migrer les membres des anciens rôles (stylés) vers les nouveaux, puis supprimer les
-    #    anciens — doit venir APRÈS setup-roles (les rôles cibles doivent exister)
-    ("migration-roles", lambda bot, g: _cog_setup(bot, "Hierarchy", g, "run_role_migration")),
-    # 3. les salons, catégorie par catégorie (Communauté d'abord : le honeypot s'y range)
+    # 2. les salons, catégorie par catégorie (Communauté d'abord : le honeypot s'y range)
     ("setup-communaute", lambda bot, g: community.run_setup(bot, g)),
     ("setup-logs", lambda bot, g: logs.run_setup(bot, g)),
     ("setup-prison", lambda bot, g: _cog_setup(bot, "Prison", g)),
