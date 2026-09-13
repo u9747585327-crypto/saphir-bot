@@ -2,7 +2,7 @@ import time
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from cogs._shared import handle_app_error
 from storage import aload_json, asave_json
@@ -245,6 +245,52 @@ class VoiceHub(commands.Cog):
         # IDs des salons perso crees par le hub, a supprimer une fois vides
         self.temp_channels = set()
         bot.add_view(VoiceControlView())
+        self.cleanup_empty.start()
+
+    def cog_unload(self):
+        self.cleanup_empty.cancel()
+
+    def _is_temp(self, channel, hub_id) -> bool:
+        """Vrai si `channel` est un salon perso cree par le hub (par ID suivi en memoire,
+        sinon par prefixe de nom pour survivre a un redemarrage)."""
+        if not isinstance(channel, discord.VoiceChannel):
+            return False
+        if hub_id is not None and channel.id == hub_id:
+            return False
+        return channel.id in self.temp_channels or channel.name.startswith(TEMP_CHANNEL_PREFIX)
+
+    @tasks.loop(seconds=120)
+    async def cleanup_empty(self):
+        """Balaie les salons perso VIDES et les supprime. La suppression sur départ ne se
+        déclenche que quand quelqu'un quitte : un salon resté vide (redemarrage du bot,
+        dernier membre parti pendant une coupure) ne serait jamais nettoye sans ce balayage.
+        On ignore les salons de moins de 60 s pour ne pas supprimer un salon fraichement cree
+        avant que son proprietaire n'y soit deplace."""
+        settings = await aload_json(GUILD_SETTINGS_FILE, {})
+        now = discord.utils.utcnow()
+        for guild in self.bot.guilds:
+            hub_id = settings.get(str(guild.id), {}).get("voice_hub_channel_id")
+            for channel in list(guild.voice_channels):
+                if not self._is_temp(channel, hub_id):
+                    continue
+                if len(channel.members) > 0:
+                    continue
+                if (now - channel.created_at).total_seconds() < 60:
+                    continue
+                self.temp_channels.discard(channel.id)
+                try:
+                    await channel.delete(reason="Salon vocal temporaire vide (balayage)")
+                except (discord.NotFound, discord.Forbidden):
+                    pass
+
+    @cleanup_empty.before_loop
+    async def before_cleanup_empty(self):
+        await self.bot.wait_until_ready()
+
+    @cleanup_empty.error
+    async def cleanup_empty_error(self, error: Exception):
+        print(f"[!] cleanup_empty a plante ({type(error).__name__}: {error}) -- redemarrage")
+        self.cleanup_empty.restart()
 
     @app_commands.command(
         name="setup-vocal",

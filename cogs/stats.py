@@ -78,27 +78,43 @@ class Stats(commands.Cog):
     def cog_unload(self):
         self.refresh_stats.cancel()
 
+    async def _update_guild(self, guild: discord.Guild, settings=None):
+        """Met à jour les compteurs d'un serveur. Le renommage de salon est limité par
+        Discord (~2 / 10 min par salon) : un échec est ignoré, le loop rattrapera."""
+        if settings is None:
+            settings = await aload_json(GUILD_SETTINGS_FILE, {})
+        stats_ids = settings.get(str(guild.id), {}).get("stats_channel_ids", {})
+        for key, template, _keywords in STATS_CHANNELS:
+            channel = guild.get_channel(stats_ids.get(key, 0))
+            if not isinstance(channel, discord.VoiceChannel):
+                continue
+            name = _label(template, _value_for(guild, key))
+            if channel.name != name:
+                try:
+                    await channel.edit(name=name, reason="Mise à jour du compteur (Saphir)")
+                except discord.HTTPException:
+                    pass
+
     @tasks.loop(seconds=STATS_REFRESH_SECONDS)
     async def refresh_stats(self):
         settings = await aload_json(GUILD_SETTINGS_FILE, {})
-        changed = False
         for guild in self.bot.guilds:
-            stats_ids = settings.get(str(guild.id), {}).get("stats_channel_ids", {})
-            for key, template, _keywords in STATS_CHANNELS:
-                channel = guild.get_channel(stats_ids.get(key, 0))
-                if not isinstance(channel, discord.VoiceChannel):
-                    continue
-                name = _label(template, _value_for(guild, key))
-                if channel.name != name:
-                    try:
-                        await channel.edit(name=name, reason="Mise à jour du compteur (Saphir)")
-                        changed = True
-                    except discord.HTTPException:
-                        # renommage rate-limité (~2 / 10 min par salon) : on réessaiera au tick suivant
-                        pass
-        if changed:
-            # rien à persister ici, les IDs ne changent pas — placeholder pour lisibilité
-            pass
+            await self._update_guild(guild, settings)
+
+    # mise à jour réactive : dès qu'un membre arrive/part ou que le boost change, on
+    # rafraîchit tout de suite (le loop de 10 min reste le filet de sécurité)
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        await self._update_guild(member.guild)
+
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: discord.Member):
+        await self._update_guild(member.guild)
+
+    @commands.Cog.listener()
+    async def on_guild_update(self, before: discord.Guild, after: discord.Guild):
+        if before.premium_subscription_count != after.premium_subscription_count:
+            await self._update_guild(after)
 
     @refresh_stats.before_loop
     async def before_refresh_stats(self):
