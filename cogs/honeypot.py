@@ -4,7 +4,7 @@ from discord.ext import commands
 
 from cogs._shared import handle_app_error
 from config import INFOS_CATEGORY_NAME, HONEYPOT_CHANNEL_NAME, COLORS
-from services.setup_kit import adopt_text_channel, post_once
+from services.setup_kit import adopt_text_channel, normalize, post_once
 
 
 async def run_setup(bot, guild: discord.Guild) -> list:
@@ -24,8 +24,9 @@ async def run_setup(bot, guild: discord.Guild) -> list:
         description=(
             "Ce salon sert à repérer les **bots** et comptes automatisés qui postent partout sans "
             "distinction sur le serveur (raids, spam).\n\n"
-            "**N'écris jamais ici, même par curiosité** — tout message posté, humain ou bot, "
-            "entraîne une expulsion immédiate du serveur."
+            "**N'écris jamais ici, même par curiosité** — tout message posté entraîne une "
+            "expulsion immédiate du serveur (sauf le staff, qui en est exempté pour pouvoir "
+            "tester le salon)."
         ),
         color=discord.Color(COLORS["gold"]),
     )
@@ -79,7 +80,10 @@ class Honeypot(commands.Cog):
     async def on_message(self, message: discord.Message):
         if message.author.id == self.bot.user.id:
             return
-        if not message.guild or message.channel.name != HONEYPOT_CHANNEL_NAME:
+        # comparaison tolérante au style (nom normalisé) plutôt qu'un nom exact : sur un
+        # message qui n'est de toute façon PAS dans le honeypot, cette comparaison ne coûte
+        # rien de plus qu'avant (pas de recherche dans tout le serveur à chaque message)
+        if not message.guild or normalize(message.channel.name) != normalize(HONEYPOT_CHANNEL_NAME):
             return
 
         member = message.author
