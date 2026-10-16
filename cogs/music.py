@@ -96,6 +96,28 @@ def _extract(query, options):
         return ydl.extract_info(query, download=False)
 
 
+def url_de_entree(entry) -> str:
+    """Adresse de la *page* du morceau, jamais celle du flux audio.
+
+    Piège : pour une vidéo seule, yt-dlp remplit déjà `url` avec le lien direct du flux
+    (`videoplayback?expire=…`), qui est signé, expire vite et est lié à une IP. Le
+    réutiliser plus tard pour relancer une extraction donne un 403. `webpage_url` est
+    l'adresse stable (`watch?v=…`), c'est elle qu'il faut garder.
+    """
+    url = entry.get("webpage_url") or ""
+    if not url:
+        # en playlist à plat, `url` est une page (ou un identifiant nu) ; pour une
+        # vidéo seule, c'est le flux signé, qu'on refuse
+        candidat = entry.get("url") or ""
+        if "videoplayback" not in candidat:
+            url = candidat
+    if not url:
+        url = entry.get("id") or ""
+    if url and not url.startswith("http"):
+        url = f"https://www.youtube.com/watch?v={url}"
+    return url
+
+
 def lien_de_playlist(query) -> bool:
     """Vrai uniquement pour un lien de playlist *pure* (youtube.com/playlist?list=…).
 
@@ -136,12 +158,9 @@ async def search(query, requester_id, toute_la_playlist=False):
     for entry in entries:
         if not entry:
             continue
-        url = entry.get("url") or entry.get("webpage_url")
+        url = url_de_entree(entry)
         if not url:
             continue
-        # en mode extract_flat, les entrées de playlist ne donnent qu'un identifiant
-        if not url.startswith("http"):
-            url = f"https://www.youtube.com/watch?v={url}"
         tracks.append(
             Track(
                 url=url,
