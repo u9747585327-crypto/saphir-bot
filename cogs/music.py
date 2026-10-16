@@ -168,10 +168,13 @@ class Player:
 
     # ── file d'attente ───────────────────────────────────────────────────────
 
-    def add(self, tracks):
+    def add(self, tracks, en_tete=False):
         libre = MAX_QUEUE - len(self.queue)
         ajoutes = tracks[:max(0, libre)]
-        self.queue.extend(ajoutes)
+        if en_tete:
+            self.queue[:0] = ajoutes
+        else:
+            self.queue.extend(ajoutes)
         self._added.set()
         return len(ajoutes), len(tracks) - len(ajoutes)
 
@@ -348,6 +351,14 @@ class Music(commands.Cog):
     @app_commands.command(name="play", description="Joue un lien (YouTube, playlist…) ou lance une recherche")
     @app_commands.describe(recherche="Un lien, ou simplement un titre à chercher")
     async def play(self, interaction: discord.Interaction, recherche: str):
+        await self.ajouter(interaction, recherche, en_tete=False)
+
+    @app_commands.command(name="playnext", description="Ajoute en tête de file, juste après le morceau en cours")
+    @app_commands.describe(recherche="Un lien, ou simplement un titre à chercher")
+    async def playnext(self, interaction: discord.Interaction, recherche: str):
+        await self.ajouter(interaction, recherche, en_tete=True)
+
+    async def ajouter(self, interaction: discord.Interaction, recherche: str, en_tete: bool):
         if yt_dlp is None:
             await interaction.response.send_message(
                 "❌ yt-dlp n'est pas installé sur le serveur, la musique est indisponible.", ephemeral=True
@@ -369,16 +380,17 @@ class Music(commands.Cog):
             await interaction.followup.send("❌ Aucun résultat pour cette recherche.", ephemeral=True)
             return
 
-        ajoutes, refuses = player.add(tracks)
+        ajoutes, refuses = player.add(tracks, en_tete=en_tete)
         if ajoutes == 0:
             await interaction.followup.send(f"❌ La file est pleine ({MAX_QUEUE} morceaux).", ephemeral=True)
             return
 
+        place = "en tête de file" if en_tete else "à la file"
         if ajoutes == 1:
             track = tracks[0]
-            message = f"✅ Ajouté à la file : **{track.title}** ({format_duration(track.duration)})"
+            message = f"✅ Ajouté {place} : **{track.title}** ({format_duration(track.duration)})"
         else:
-            message = f"✅ {ajoutes} morceaux ajoutés à la file."
+            message = f"✅ {ajoutes} morceaux ajoutés {place}."
         if refuses:
             message += f"\n⚠️ {refuses} morceau(x) ignoré(s), la file est pleine."
         await interaction.followup.send(message)
@@ -508,6 +520,20 @@ class Music(commands.Cog):
         if player.source is not None:
             player.source.volume = player.volume
         await interaction.response.send_message(f"🔊 Volume réglé sur {niveau} %.")
+
+    @app_commands.command(name="clear", description="Vide la file d'attente sans couper le morceau en cours")
+    async def clear(self, interaction: discord.Interaction):
+        player = await self.exige_player(interaction)
+        if player is None:
+            return
+        nombre = len(player.queue)
+        if nombre == 0:
+            await interaction.response.send_message("La file est déjà vide.", ephemeral=True)
+            return
+        player.queue.clear()
+        await interaction.response.send_message(
+            f"🗑️ {nombre} morceau(x) retiré(s). Le morceau en cours continue — `/skip` pour l'arrêter aussi."
+        )
 
     @app_commands.command(name="remove", description="Retire un morceau de la file, par son numéro")
     @app_commands.describe(numero="Le numéro affiché par /queue")
