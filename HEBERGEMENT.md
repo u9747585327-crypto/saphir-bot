@@ -1,78 +1,121 @@
 # Hébergement de Saphir — comment tout est branché
 
-Doc de référence pour recréer la même stack ailleurs si besoin. Trois services externes,
-tous gratuits, tous indépendants du code (rien n'est codé en dur — tout passe par des
-variables d'environnement).
+Tout tourne sur un seul VPS IONOS : le bot et ses données. Aucun service externe, aucun
+compte à renouveler, rien qui puisse tomber en panne de son côté.
 
-## 1. Le bot lui-même — Render.com (Web Service, plan gratuit)
+> **Historique** : le bot tournait sur Render.com (plan gratuit) avec MongoDB Atlas comme
+> base et UptimeRobot pour l'empêcher de s'endormir. Tout a été rapatrié sur le VPS.
+> Render n'héberge plus rien.
 
-- Compte sur [render.com](https://render.com), connecté au dépôt GitHub
-  `u9747585327-crypto/saphir-bot`.
-- Type de service : **Web Service** (pas "Background Worker" — le plan gratuit exige un
-  port HTTP ouvert, voir point 3).
-- Build command : `pip install -r requirements.txt`
-- Start command : `python main.py`
-- Version Python fixée par `runtime.txt` (`python-3.12.7`) — Render la lit automatiquement.
-- **Variables d'environnement à renseigner sur Render** (Settings → Environment) :
-  - `DISCORD_TOKEN` — le token du bot, dans le Developer Portal Discord de l'application.
-  - `MONGODB_URI` — voir point 2.
-  - `GROQ_API_KEY` — clé API Groq, pour le chat IA (`console.groq.com`).
-  - `PORT` — Render la fournit tout seul, pas besoin de la définir à la main.
-- **Limite du plan gratuit** : le service s'endort après 15 minutes sans requête HTTP
-  entrante. Un bot Discord ne reçoit pas ce genre de requête tout seul → il faut le
-  "pinguer" de l'extérieur (point 3), sinon il se déconnecte de Discord au bout d'un moment.
-- Chaque `git push` sur la branche déployée redéploie automatiquement.
+## 1. Le bot — VPS IONOS (systemd)
 
-## 2. La base de données — MongoDB Atlas (Free Tier, cluster M0)
+Un VPS Linux (Ubuntu 22.04+ ou Debian 12) chez IONOS, accessible en SSH. Le bot tourne
+comme un service systemd : il démarre avec la machine et redémarre tout seul s'il plante.
 
-- Compte sur [mongodb.com/cloud/atlas](https://www.mongodb.com/cloud/atlas), cluster gratuit
-  (M0, 512 Mo — largement suffisant pour ce bot).
-- Sert à stocker tout ce qui doit survivre à un redémarrage : niveaux/XP, heures vocales,
-  peines Alcatraz, casiers, réglages par serveur (rôles, salons mémorisés par ID)...
-- Accès réseau : sur Atlas, autoriser `0.0.0.0/0` (Network Access → Add IP Address →
-  "Allow access from anywhere") — l'IP de sortie de Render change à chaque redéploiement,
-  impossible de la fixer.
-- Récupérer la chaîne de connexion (Connect → Drivers → Python) et la coller telle quelle
-  dans la variable `MONGODB_URI` sur Render — remplacer `<password>` par le vrai mot de passe
-  de l'utilisateur de base de données créé sur Atlas.
-- **Filet de sécurité intégré dans le code** (`storage.py`) : si `MONGODB_URI` est absente ou
-  que la connexion échoue au démarrage, le bot bascule tout seul sur des fichiers JSON
-  locaux dans `data/`. Ça permet de tester en local sans base — mais sur Render, ces
-  fichiers sont perdus à chaque redéploiement (le disque n'est pas persistant), donc en
-  production `MONGODB_URI` doit toujours être configurée.
+**Installation, en une commande sur le VPS :**
 
-## 3. Le "ping" anti-veille — UptimeRobot
+```bash
+ssh root@<ip-du-vps>
+git clone https://github.com/u9747585327-crypto/saphir-bot.git /tmp/saphir-src
+sudo bash /tmp/saphir-src/deploy/install-ionos.sh
+```
 
-- Compte gratuit sur [uptimerobot.com](https://uptimerobot.com).
-- Un monitor **HTTP(s)** créé, pointant vers l'URL publique du service Render
-  (ex. `https://saphir-bot.onrender.com`), avec un intervalle de **5 minutes**
-  (le minimum du plan gratuit — largement en dessous des 15 min avant mise en veille).
-- Côté bot, cette URL répond grâce à un petit serveur web interne (`keep_alive.py`,
-  Flask + waitress) lancé en parallèle du bot Discord : une route `/` qui répond juste
-  "Saphir est en ligne." UptimeRobot n'a besoin de rien d'autre — un simple 200 OK.
-- Sans ce ping, Render met le service en veille après 15 min d'inactivité HTTP, et le bot
-  disparaît de Discord (hors ligne) jusqu'à la prochaine requête qui le réveille (ce qui
-  prend 30-60 s).
+Le script [deploy/install-ionos.sh](deploy/install-ionos.sh) fait tout :
+
+- installe `git`, `python3`, `python3-venv` ;
+- crée un utilisateur système `saphir-bot` sans shell (le bot ne tourne pas en root) ;
+- clone le code dans `/opt/saphir-bot` ;
+- crée l'environnement virtuel `.venv` et installe `requirements.txt` ;
+- crée un `.env` vide en `chmod 600` (jamais écrasé si déjà présent) ;
+- installe et active le service [deploy/saphir-bot.service](deploy/saphir-bot.service).
+
+**Variables à renseigner dans `/opt/saphir-bot/.env`** :
+
+| Variable | Obligatoire | Où la trouver |
+|---|---|---|
+| `DISCORD_TOKEN` | oui | Developer Portal Discord → ton application → onglet Bot |
+| `GROQ_API_KEY` | oui | [console.groq.com](https://console.groq.com) — pour le chat IA |
+| `MONGODB_URI` | **non** | à laisser commentée : le stockage est local (voir point 2) |
+
+Puis `systemctl start saphir-bot`.
+
+**Dans le Developer Portal Discord**, onglet Bot : activer les **Privileged Gateway
+Intents** `Server Members Intent` et `Message Content Intent` — le code en a besoin
+(autorole, logs de messages, leveling).
+
+**Au quotidien :**
+
+```bash
+systemctl status saphir-bot        # état du service
+journalctl -u saphir-bot -f        # logs en direct
+systemctl restart saphir-bot       # redémarrage
+sudo bash /opt/saphir-bot/deploy/install-ionos.sh   # mise à jour depuis GitHub
+```
+
+Contrairement à Render, **un `git push` ne déploie rien tout seul** : il faut relancer le
+script d'installation pour que le VPS prenne le nouveau code.
+
+**Pas besoin d'ouvrir de port dans le pare-feu IONOS.** Un bot Discord n'établit que des
+connexions sortantes. Le petit serveur Flask de [keep_alive.py](keep_alive.py) écoute
+toujours sur le port 8080, mais il ne sert plus à rien ici (voir point 3).
+
+## 2. Les données — SQLite, sur le VPS
+
+Tout est dans **un seul fichier** : `/opt/saphir-bot/data/saphir.db`. Niveaux/XP, heures
+vocales, peines Alcatraz, casiers, réglages par serveur, scans. Pas de serveur de base de
+données à installer, pas de RAM consommée, pas de compte externe : SQLite est inclus dans
+Python.
+
+**Pourquoi SQLite et pas des fichiers JSON** : l'ancien repli JSON réécrivait le fichier
+entier après l'avoir tronqué (`open(path, "w")`). Si le bot était tué au mauvais moment —
+reboot, `systemctl restart`, OOM — le fichier restait à moitié écrit et les données
+étaient perdues. Avec le leveling qui écrit à chaque message, le risque était réel. SQLite
+écrit dans une transaction : en cas d'arrêt brutal, c'est l'ancienne valeur qui reste,
+jamais une valeur corrompue. Le mode WAL et `synchronous=FULL` sont activés dans
+[storage.py](storage.py).
+
+**Reprise de l'existant** : au premier démarrage, s'il traîne encore des `data/*.json`
+d'une version précédente, ils sont importés automatiquement dans la base, puis laissés en
+place (rien n'est supprimé). Un fichier illisible est ignoré avec un avertissement, sans
+faire planter le bot.
+
+**Sauvegarde** — un fichier à copier, donc un cron suffit :
+
+```bash
+# sauvegarde quotidienne à 4h, 14 jours d'historique
+0 4 * * * sqlite3 /opt/saphir-bot/data/saphir.db ".backup '/root/backups/saphir-$(date +\%F).db'" && find /root/backups -name 'saphir-*.db' -mtime +14 -delete
+```
+
+(`.backup` de sqlite3 est sûr même pendant que le bot écrit, contrairement à un `cp`.)
+
+**Et si tu veux une base distante un jour** : renseigne `MONGODB_URI` dans le `.env` et le
+code rebascule sur MongoDB sans aucune modification. Le script
+[deploy/migrate-mongo-to-sqlite.py](deploy/migrate-mongo-to-sqlite.py) fait le trajet
+inverse (Atlas → SQLite), c'est lui qui a servi à la migration.
+
+## 3. Le "ping" anti-veille — supprimé
+
+Plus nécessaire, et c'est le principal gain de la migration. Render mettait le service en
+veille après 15 min sans requête HTTP, ce qui obligeait à le réveiller toutes les 5 min
+avec un monitor UptimeRobot. Un VPS ne dort jamais : le process tourne en continu, et
+systemd le relance s'il tombe. Le monitor UptimeRobot peut être supprimé.
 
 ## Schéma global
 
 ```
-Discord ⇄ Bot (Render, plan gratuit)
+Discord ⇄ Bot (VPS IONOS, service systemd, 24/7)
               │
-              ├── stocke/lit ses données ⇄ MongoDB Atlas (M0 gratuit)
-              │
-              └── expose une route HTTP "/" ⇐ ping toutes les 5 min ⇐ UptimeRobot
+              └── lit/écrit ⇄ data/saphir.db (SQLite, même machine)
 ```
+
+Une seule machine, une seule chose à surveiller.
 
 ## Pour en recréer un autre
 
-1. Nouveau repo GitHub avec le code.
-2. Nouveau Web Service Render pointant dessus, avec les 3 variables d'environnement
-   (`DISCORD_TOKEN`, `MONGODB_URI`, `GROQ_API_KEY`).
-3. Nouveau cluster M0 sur Atlas (ou une base à part dans le même cluster existant — Atlas
-   permet plusieurs bases par cluster), accès réseau `0.0.0.0/0`.
-4. Nouveau monitor UptimeRobot sur l'URL Render du nouveau service.
+1. Repo GitHub avec le code.
+2. VPS IONOS (Ubuntu/Debian), puis `sudo bash deploy/install-ionos.sh` — en adaptant
+   `NAME`, `REPO` et le bloc `.env` en haut du script, ainsi que le fichier `.service`.
+3. Remplir le `.env`, `systemctl start`. Rien d'autre : la base se crée toute seule.
 
-Aucun de ces 3 services ne connaît l'existence des autres — ils communiquent uniquement via
-les variables d'environnement (URL, token, URI) que tu configures toi-même. Rien à
-recréer côté code.
+Plusieurs bots peuvent cohabiter sur le même VPS : chacun son dossier `/opt/<nom>`, son
+utilisateur système, son `.env`, son service systemd et sa base SQLite.

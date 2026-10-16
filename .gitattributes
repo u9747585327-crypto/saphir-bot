@@ -1,0 +1,4 @@
+# Les scripts et unites systemd doivent arriver en LF sur le serveur Linux,
+# meme si le poste de dev est sous Windows (bash refuse un shebang en CRLF).
+*.sh      text eol=lf
+*.service text eol=lf

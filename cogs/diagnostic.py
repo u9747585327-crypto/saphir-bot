@@ -42,7 +42,7 @@ class Diagnostic(commands.Cog):
         if bot_top_role.position < len(guild.roles) - 4:
             lines.append("⚠️ Le rôle du bot est peut-être trop bas dans la liste — monte-le pour éviter des erreurs de permissions.")
 
-        lines.append(f"**Stockage** : {'✅ MongoDB connecté' if storage.is_connected() else '⚠️ Fichiers locaux (perdus au redémarrage sur Render)'}")
+        lines.append(f"**Stockage** : ✅ {storage.backend()}")
         lines.append(f"**Chat IA** : {'✅ Groq connecté' if funchat.is_ai_enabled() else '⚠️ Réponses toutes faites (pas de GROQ_API_KEY)'}")
 
         # état des boucles de fond : une tasks.loop morte ne se voit nulle part ailleurs
