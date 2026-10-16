@@ -17,6 +17,10 @@ import os
 import sqlite3
 import sys
 
+# Les cles peuvent contenir des emojis (noms de scans) : sur un serveur dont la
+# locale n'est pas UTF-8, un simple print() ferait planter le script.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.environ.get("STORAGE_DB") or os.path.join(BASE_DIR, "data", "saphir.db")
 
