@@ -22,7 +22,7 @@ die() { printf '\n\033[1;31mErreur : %s\033[0m\n' "$1" >&2; exit 1; }
 log "Paquets systeme"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq git python3 python3-venv python3-pip sqlite3 ca-certificates
+apt-get install -y -qq git python3 python3-venv python3-pip sqlite3 ffmpeg ca-certificates
 
 PY_OK=$(python3 -c 'import sys; print(1 if sys.version_info >= (3, 10) else 0)')
 [[ "$PY_OK" == "1" ]] || die "Python 3.10+ requis, trouve $(python3 -V)"
@@ -49,6 +49,9 @@ log "Environnement virtuel + dependances"
 [[ -d "$APP_DIR/.venv" ]] || python3 -m venv "$APP_DIR/.venv"
 "$APP_DIR/.venv/bin/pip" install --quiet --upgrade pip
 "$APP_DIR/.venv/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
+# YouTube casse regulierement l'extraction : yt-dlp doit rester a jour, sinon la
+# lecture s'arrete de fonctionner du jour au lendemain.
+"$APP_DIR/.venv/bin/pip" install --quiet --upgrade yt-dlp
 
 NEEDS_ENV=0
 if [[ ! -f "$APP_DIR/.env" ]]; then

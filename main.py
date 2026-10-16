@@ -29,6 +29,7 @@ INITIAL_COGS = [
     "cogs.voicerole",
     "cogs.community",
     "cogs.voicehub",
+    "cogs.music",
     "cogs.bringall",
     "cogs.honeypot",
     "cogs.antiraid",
