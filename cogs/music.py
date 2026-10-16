@@ -305,7 +305,9 @@ class Player:
         if voice is not None:
             try:
                 voice.stop()
-                await voice.disconnect(force=True)
+                # force=True suffit normalement, mais une passerelle vocale qui ne
+                # répond plus peut faire traîner l'appel : on ne bloque jamais dessus.
+                await asyncio.wait_for(voice.disconnect(force=True), timeout=10)
             except Exception:
                 pass
         self.cog.players.pop(self.guild.id, None)
@@ -423,7 +425,10 @@ class Music(commands.Cog):
             track = tracks[0]
             message = f"✅ Ajouté {place} : **{track.title}** ({format_duration(track.duration)})"
         else:
-            message = f"✅ {ajoutes} morceaux ajoutés {place}."
+            # On dit explicitement qu'une playlist a été développée : sans ça, voir
+            # arriver 500 morceaux après un seul /play reste une énigme.
+            raison = "playlist demandée" if toute_la_playlist else "lien de playlist"
+            message = f"✅ **{ajoutes} morceaux** ajoutés {place} ({raison})."
         if refuses:
             message += f"\n⚠️ {refuses} morceau(x) ignoré(s), la file est pleine."
         await interaction.followup.send(message)
@@ -445,8 +450,10 @@ class Music(commands.Cog):
         player = await self.exige_player(interaction)
         if player is None:
             return
-        await player.cleanup()
+        # On répond AVANT de nettoyer : Discord ferme l'interaction au bout de 3 s, et
+        # une déconnexion du vocal peut prendre plus longtemps que ça.
         await interaction.response.send_message("⏹️ File vidée, je quitte le vocal.")
+        await player.cleanup()
 
     @app_commands.command(name="pause", description="Met la lecture en pause")
     async def pause(self, interaction: discord.Interaction):
