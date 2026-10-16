@@ -19,6 +19,7 @@ Deux choix d'implémentation qui méritent une explication :
 import asyncio
 import random
 import time
+from urllib.parse import parse_qs, urlparse
 
 import discord
 from discord import app_commands
@@ -95,9 +96,34 @@ def _extract(query, options):
         return ydl.extract_info(query, download=False)
 
 
-async def search(query, requester_id):
-    """Transforme un lien ou une recherche en liste de Track (plusieurs si playlist)."""
-    info = await asyncio.to_thread(_extract, query, YTDL_SEARCH)
+def lien_de_playlist(query) -> bool:
+    """Vrai uniquement pour un lien de playlist *pure* (youtube.com/playlist?list=…).
+
+    Un lien de vidéo copié depuis YouTube pendant qu'une playlist ou un mix tourne
+    contient lui aussi `&list=…`, alors que l'utilisateur ne demande que cette vidéo.
+    C'est le piège classique : sans cette distinction, un simple lien ajoute des
+    centaines de morceaux à la file.
+    """
+    if not isinstance(query, str) or not query.startswith("http"):
+        return False
+    url = urlparse(query)
+    params = parse_qs(url.query)
+    if "v" in params:                       # une vidéo : le `list` n'est qu'un contexte
+        return False
+    return url.path.rstrip("/").endswith("/playlist") and "list" in params
+
+
+async def search(query, requester_id, toute_la_playlist=False):
+    """Transforme un lien ou une recherche en liste de Track.
+
+    Par défaut, un lien de vidéo ne donne qu'un seul morceau, même s'il traîne un
+    `&list=` derrière lui. Les playlists ne sont développées que si l'utilisateur l'a
+    explicitement demandé, ou si le lien est un lien de playlist pur.
+    """
+    options = dict(YTDL_SEARCH)
+    options["noplaylist"] = not (toute_la_playlist or lien_de_playlist(query))
+
+    info = await asyncio.to_thread(_extract, query, options)
 
     if info is None:
         return []
@@ -348,17 +374,24 @@ class Music(commands.Cog):
 
     # ── commandes ────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="play", description="Joue un lien (YouTube, playlist…) ou lance une recherche")
-    @app_commands.describe(recherche="Un lien, ou simplement un titre à chercher")
-    async def play(self, interaction: discord.Interaction, recherche: str):
-        await self.ajouter(interaction, recherche, en_tete=False)
+    @app_commands.command(name="play", description="Joue un lien (YouTube…) ou lance une recherche")
+    @app_commands.describe(
+        recherche="Un lien, ou simplement un titre à chercher",
+        playlist="Ajouter toute la playlist du lien, et pas seulement la vidéo",
+    )
+    async def play(self, interaction: discord.Interaction, recherche: str, playlist: bool = False):
+        await self.ajouter(interaction, recherche, en_tete=False, toute_la_playlist=playlist)
 
     @app_commands.command(name="playnext", description="Ajoute en tête de file, juste après le morceau en cours")
-    @app_commands.describe(recherche="Un lien, ou simplement un titre à chercher")
-    async def playnext(self, interaction: discord.Interaction, recherche: str):
-        await self.ajouter(interaction, recherche, en_tete=True)
+    @app_commands.describe(
+        recherche="Un lien, ou simplement un titre à chercher",
+        playlist="Ajouter toute la playlist du lien, et pas seulement la vidéo",
+    )
+    async def playnext(self, interaction: discord.Interaction, recherche: str, playlist: bool = False):
+        await self.ajouter(interaction, recherche, en_tete=True, toute_la_playlist=playlist)
 
-    async def ajouter(self, interaction: discord.Interaction, recherche: str, en_tete: bool):
+    async def ajouter(self, interaction: discord.Interaction, recherche: str, en_tete: bool,
+                      toute_la_playlist: bool = False):
         if yt_dlp is None:
             await interaction.response.send_message(
                 "❌ yt-dlp n'est pas installé sur le serveur, la musique est indisponible.", ephemeral=True
@@ -371,7 +404,7 @@ class Music(commands.Cog):
             return
 
         try:
-            tracks = await search(recherche, interaction.user.id)
+            tracks = await search(recherche, interaction.user.id, toute_la_playlist=toute_la_playlist)
         except Exception as e:
             await interaction.followup.send(f"❌ Recherche impossible : {e}", ephemeral=True)
             return
