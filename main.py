@@ -84,8 +84,19 @@ async def main():
     if not TOKEN:
         raise SystemExit("DISCORD_TOKEN manquant dans le fichier .env")
     async with bot:
+        # Un cog qui refuse de se charger ne doit pas emporter tout le bot avec lui :
+        # jusqu'ici la moindre erreur (deux commandes du même nom, dépendance absente)
+        # faisait planter le démarrage, et systemd relançait en boucle un bot qui ne
+        # répondait plus à rien. On signale et on continue avec les autres.
+        echecs = []
         for cog in INITIAL_COGS:
-            await bot.load_extension(cog)
+            try:
+                await bot.load_extension(cog)
+            except Exception as e:
+                echecs.append(cog)
+                print(f"⚠️ Cog {cog} non chargé : {type(e).__name__} : {e}")
+        if echecs:
+            print(f"⚠️ {len(echecs)} cog(s) désactivé(s) : {', '.join(echecs)}")
         await bot.start(TOKEN)
 
 

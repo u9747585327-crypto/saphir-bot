@@ -561,8 +561,10 @@ class Music(commands.Cog):
             player.source.volume = player.volume
         await interaction.response.send_message(f"🔊 Volume réglé sur {niveau} %.")
 
-    @app_commands.command(name="clear", description="Vide la file d'attente sans couper le morceau en cours")
-    async def clear(self, interaction: discord.Interaction):
+    # /clear est déjà pris par cogs/moderation.py (suppression de messages) : deux
+    # commandes du même nom empêchent le bot de démarrer.
+    @app_commands.command(name="clearqueue", description="Vide la file d'attente sans couper le morceau en cours")
+    async def clearqueue(self, interaction: discord.Interaction):
         player = await self.exige_player(interaction)
         if player is None:
             return
