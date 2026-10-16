@@ -32,9 +32,13 @@ log "Utilisateur systeme $SERVICE_USER"
 id -u "$SERVICE_USER" &>/dev/null || useradd --system --create-home --home-dir "/home/$SERVICE_USER" --shell /usr/sbin/nologin "$SERVICE_USER"
 
 log "Code source dans $APP_DIR"
+# Le dossier appartient a l'utilisateur du service, pas a root : sans cette
+# option, git refuse d'y toucher ("detected dubious ownership").
+GIT=(git -c safe.directory="$APP_DIR" -C "$APP_DIR")
+
 if [[ -d "$APP_DIR/.git" ]]; then
-  git -C "$APP_DIR" fetch --quiet origin
-  git -C "$APP_DIR" reset --hard --quiet origin/main
+  "${GIT[@]}" fetch --quiet origin
+  "${GIT[@]}" reset --hard --quiet origin/main
 else
   rm -rf "$APP_DIR"
   git clone --quiet "$REPO" "$APP_DIR"
