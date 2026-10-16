@@ -61,20 +61,30 @@ with open(src, "r", encoding="utf-8") as f:
 if not text:
     sys.exit("Le fichier est vide.")
 
+decoder = json.JSONDecoder()
+
 try:
     parsed = json.loads(text)
     docs = parsed if isinstance(parsed, list) else [parsed]
 except ValueError:
-    # format "un document JSON par ligne" (JSON Lines)
+    # Suite de documents JSON colles bout a bout : c'est ce que donne un
+    # copier-coller depuis la vue JSON d'Atlas, en une ligne ou en indente,
+    # avec ou sans virgules entre les documents.
     docs = []
-    for n, line in enumerate(text.splitlines(), 1):
-        line = line.strip().rstrip(",")
-        if not line:
-            continue
+    i = 0
+    n = len(text)
+    while i < n:
+        while i < n and (text[i].isspace() or text[i] in ',[]'):
+            i += 1
+        if i >= n:
+            break
         try:
-            docs.append(json.loads(line))
+            doc, offset = decoder.raw_decode(text, i)
         except ValueError as e:
-            sys.exit(f"Ligne {n} illisible : {e}")
+            around = ' '.join(text[max(0, i - 40):i + 40].split())
+            sys.exit('JSON illisible vers le caractere ' + str(i) + ' : ' + str(e) + ' ... ' + around)
+        docs.append(doc)
+        i = offset
 
 pairs = []
 for doc in docs:
