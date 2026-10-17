@@ -37,6 +37,7 @@ deploy/install-ionos.sh.
 
 import asyncio
 import json
+import os
 import random
 import shlex
 import sys
@@ -65,6 +66,19 @@ MAX_QUEUE = 500
 QUEUE_PAGE = 10
 REPRISES_MAX = 2            # flux coupé avant la fin : reprises avant d'abandonner le morceau
 DELAI_YTDLP = 60            # s : au-delà, YouTube ne répond pas, on abandonne
+
+# Annonces « Saphir Radio » jouées à l'arrivée dans le vocal (voix générée une fois pour
+# toutes, livrée avec le bot : rien n'est appelé en ligne). Ajouter un .ogg dans ce
+# dossier suffit à l'ajouter au tirage ; le vider désactive l'annonce.
+JINGLES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "jingles")
+
+
+def jingle_au_hasard():
+    try:
+        fichiers = [f for f in os.listdir(JINGLES_DIR) if f.lower().endswith((".ogg", ".opus", ".mp3"))]
+    except FileNotFoundError:
+        return None
+    return os.path.join(JINGLES_DIR, random.choice(fichiers)) if fichiers else None
 
 
 def horodatage(seconds) -> str:
@@ -280,7 +294,24 @@ class Player:
         self._added = asyncio.Event()   # réveille la boucle quand on ajoute un morceau
         self._finished = asyncio.Event()  # posé par ffmpeg quand le morceau se termine
         self._stopped = False
+        self._intro_finie = asyncio.Event()
+        self._tache_intro = self.bot.loop.create_task(self._jouer_intro())
         self.task = self.bot.loop.create_task(self.runner())
+
+    async def _jouer_intro(self):
+        """« Saphir Radio » à l'arrivée dans le vocal. Joué pendant que le premier
+        morceau se prépare : yt-dlp met de toute façon quelques secondes."""
+        try:
+            chemin = jingle_au_hasard()
+            if chemin and self.voice is not None and self.voice.is_connected():
+                fini = asyncio.Event()
+                source = discord.FFmpegOpusAudio(chemin, options=f"-vn -af volume={self.volume:.2f}")
+                self.voice.play(source, after=lambda e: self.bot.loop.call_soon_threadsafe(fini.set))
+                await asyncio.wait_for(fini.wait(), timeout=20)
+        except Exception as e:  # une annonce ratée ne doit jamais bloquer la musique
+            print(f"[musique] annonce Saphir Radio non jouée : {e}")
+        finally:
+            self._intro_finie.set()
 
     # ── file d'attente ───────────────────────────────────────────────────────
 
@@ -328,6 +359,11 @@ class Player:
                     self.current = None
                     continue
 
+                # l'annonce d'arrivée doit être finie : un seul son à la fois dans le vocal
+                await self._intro_finie.wait()
+                if self._stopped:
+                    return
+                self._passer = False    # un /skip pendant l'annonce ne visait qu'elle
                 await self.annonce(embed=self.embed_lecture(track))
                 await self._jouer(track, url, entetes)
                 self._flux = None
