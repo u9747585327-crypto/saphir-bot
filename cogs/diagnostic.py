@@ -4,6 +4,7 @@ from discord.ext import commands
 
 import cogs.funchat as funchat
 import storage
+from cogs.autorole import get_auto_role
 from cogs._shared import handle_app_error
 from config import COLORS, LEVEL_ROLES, LOG_CHANNELS
 from services.setup_kit import normalize as _normalize
@@ -43,6 +44,13 @@ class Diagnostic(commands.Cog):
             lines.append("⚠️ Le rôle du bot est peut-être trop bas dans la liste — monte-le pour éviter des erreurs de permissions.")
 
         lines.append(f"**Stockage** : ✅ {storage.backend()}")
+        role_auto = get_auto_role(guild)
+        if role_auto is None:
+            lines.append("**Rôle automatique** : ❌ aucun — les nouveaux membres ne reçoivent rien (`/set-role-membre`)")
+        elif role_auto >= guild.me.top_role:
+            lines.append(f"**Rôle automatique** : ⚠️ {role_auto.mention} est au-dessus du rôle de Saphir, il ne peut pas le donner")
+        else:
+            lines.append(f"**Rôle automatique** : ✅ {role_auto.mention}")
         # sans elle, les logs ne peuvent plus dire QUI a fait une action (cogs/logs.py)
         if guild.me.guild_permissions.view_audit_log:
             lines.append("**Logs détaillés** : ✅ journal d'audit accessible")

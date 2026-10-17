@@ -4,6 +4,7 @@ from discord.ext import commands
 
 from cogs._shared import handle_app_error
 from config import AUTO_ROLE_NAME, COLORS, GUILD_SETTINGS_FILE
+from services.setup_kit import normalize
 from storage import load_json, save_json
 
 
@@ -14,7 +15,19 @@ def get_auto_role(guild: discord.Guild):
         role = guild.get_role(role_id)
         if role:
             return role
-    return discord.utils.get(guild.roles, name=AUTO_ROLE_NAME)
+    # Secours sans réglage enregistré (base neuve après une migration, par exemple).
+    # Le rôle porte un nom décoré, « 「🜲・✨ 𝗠𝗲𝗺𝗯𝗿𝗲」 », jamais exactement « 𝗠𝗲𝗺𝗯𝗿𝗲 » :
+    # chercher le nom exact ne le trouvait pas, et l'autorole s'arrêtait sans rien dire.
+    # On compare donc les noms normalisés, comme adopt_role — égalité stricte, pour ne
+    # pas confondre avec « Membre Staff ».
+    role = discord.utils.get(guild.roles, name=AUTO_ROLE_NAME)
+    if role is not None:
+        return role
+    cible = normalize(AUTO_ROLE_NAME)
+    return next(
+        (r for r in guild.roles if not r.managed and not r.is_default() and normalize(r.name) == cible),
+        None,
+    )
 
 
 class AutoRole(commands.Cog):
@@ -25,11 +38,15 @@ class AutoRole(commands.Cog):
     async def on_member_join(self, member: discord.Member):
         role = get_auto_role(member.guild)
         if role is None:
+            # visible dans journalctl : c'est ce silence qui a masqué la panne
+            print(f"⚠️ [autorole] {member.guild.name} : aucun rôle Membre trouvé, "
+                  f"{member} n'a rien reçu — /set-role-membre pour le choisir")
             return
         try:
             await member.add_roles(role, reason="Rôle automatique à l'arrivée")
         except discord.Forbidden:
-            pass
+            print(f"⚠️ [autorole] {member.guild.name} : impossible de donner {role.name} à {member} "
+                  "— le rôle de Saphir doit être placé AU-DESSUS de ce rôle")
 
     @app_commands.command(
         name="set-role-membre",
