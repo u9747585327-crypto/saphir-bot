@@ -67,18 +67,21 @@ QUEUE_PAGE = 10
 REPRISES_MAX = 2            # flux coupé avant la fin : reprises avant d'abandonner le morceau
 DELAI_YTDLP = 60            # s : au-delà, YouTube ne répond pas, on abandonne
 
-# Annonces « Saphir Radio » jouées à l'arrivée dans le vocal (voix Rémy (Microsoft, nouvelle génération) générée une fois pour
-# toutes, livrée avec le bot : rien n'est appelé en ligne). Ajouter un .ogg dans ce
-# dossier suffit à l'ajouter au tirage ; le vider désactive l'annonce.
+# Annonces « Saphir Radio » à l'arrivée dans le vocal et au départ. Voix Rémy (Microsoft,
+# nouvelle génération) générée une fois pour toutes et livrée avec le bot : rien n'est
+# appelé en ligne. Un .ogg ajouté dans assets/jingles/arrivee ou /depart entre dans le
+# tirage ; vider un dossier désactive l'annonce correspondante.
 JINGLES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "jingles")
 
 
-def jingle_au_hasard():
+def jingle_au_hasard(moment: str):
+    """Une annonce au hasard pour `moment` ("arrivee" ou "depart"), ou None."""
+    dossier = os.path.join(JINGLES_DIR, moment)
     try:
-        fichiers = [f for f in os.listdir(JINGLES_DIR) if f.lower().endswith((".ogg", ".opus", ".mp3"))]
+        fichiers = [f for f in os.listdir(dossier) if f.lower().endswith((".ogg", ".opus", ".mp3"))]
     except FileNotFoundError:
         return None
-    return os.path.join(JINGLES_DIR, random.choice(fichiers)) if fichiers else None
+    return os.path.join(dossier, random.choice(fichiers)) if fichiers else None
 
 
 def horodatage(seconds) -> str:
@@ -298,18 +301,23 @@ class Player:
         self._tache_intro = self.bot.loop.create_task(self._jouer_intro())
         self.task = self.bot.loop.create_task(self.runner())
 
+    async def _jouer_annonce(self, moment: str):
+        """Joue une annonce Saphir Radio et attend sa fin (20 s au plus)."""
+        chemin = jingle_au_hasard(moment)
+        if not chemin or self.voice is None or not self.voice.is_connected():
+            return
+        fini = asyncio.Event()
+        source = discord.FFmpegOpusAudio(chemin, options=f"-vn -af volume={self.volume:.2f}")
+        self.voice.play(source, after=lambda e: self.bot.loop.call_soon_threadsafe(fini.set))
+        await asyncio.wait_for(fini.wait(), timeout=20)
+
     async def _jouer_intro(self):
         """« Saphir Radio » à l'arrivée dans le vocal. Joué pendant que le premier
         morceau se prépare : yt-dlp met de toute façon quelques secondes."""
         try:
-            chemin = jingle_au_hasard()
-            if chemin and self.voice is not None and self.voice.is_connected():
-                fini = asyncio.Event()
-                source = discord.FFmpegOpusAudio(chemin, options=f"-vn -af volume={self.volume:.2f}")
-                self.voice.play(source, after=lambda e: self.bot.loop.call_soon_threadsafe(fini.set))
-                await asyncio.wait_for(fini.wait(), timeout=20)
+            await self._jouer_annonce("arrivee")
         except Exception as e:  # une annonce ratée ne doit jamais bloquer la musique
-            print(f"[musique] annonce Saphir Radio non jouée : {e}")
+            print(f"[musique] annonce d'arrivée non jouée : {e}")
         finally:
             self._intro_finie.set()
 
@@ -340,7 +348,7 @@ class Player:
                         await asyncio.wait_for(self._added.wait(), timeout=IDLE_TIMEOUT)
                     except asyncio.TimeoutError:
                         await self.annonce("💤 Personne n'a rien demandé depuis 5 minutes, je quitte le vocal.")
-                        await self.cleanup()
+                        await self.cleanup(au_revoir=True)
                         return
                     continue
 
@@ -507,7 +515,9 @@ class Player:
 
     # ── arrêt ────────────────────────────────────────────────────────────────
 
-    async def cleanup(self):
+    async def cleanup(self, au_revoir: bool = False):
+        """Arrête tout et quitte le vocal. `au_revoir` : annonce de départ avant de
+        partir (/stop, inactivité) — seulement s'il reste quelqu'un pour l'entendre."""
         self._stopped = True
         self.queue.clear()
         self.current = None
@@ -515,13 +525,21 @@ class Player:
         if voice is not None:
             try:
                 voice.stop()
+                salon = voice.channel
+                if au_revoir and salon is not None and any(not m.bot for m in salon.members):
+                    try:
+                        await self._jouer_annonce("depart")
+                    except Exception as e:
+                        print(f"[musique] annonce de départ non jouée : {e}")
                 # force=True suffit normalement, mais une passerelle vocale qui ne
                 # répond plus peut faire traîner l'appel : on ne bloque jamais dessus.
                 await asyncio.wait_for(voice.disconnect(force=True), timeout=10)
             except Exception:
                 pass
         self.cog.players.pop(self.guild.id, None)
-        if self.task and not self.task.done():
+        # appelé depuis la boucle elle-même (inactivité), elle se termine seule : l'annuler
+        # la ferait finir en « annulée » au lieu de proprement
+        if self.task and not self.task.done() and self.task is not asyncio.current_task():
             self.task.cancel()
 
 
@@ -663,7 +681,7 @@ class Music(commands.Cog):
         # On répond AVANT de nettoyer : Discord ferme l'interaction au bout de 3 s, et
         # une déconnexion du vocal peut prendre plus longtemps que ça.
         await interaction.response.send_message("⏹️ File vidée, je quitte le vocal.")
-        await player.cleanup()
+        await player.cleanup(au_revoir=True)
 
     @app_commands.command(name="pause", description="Met la lecture en pause")
     async def pause(self, interaction: discord.Interaction):
