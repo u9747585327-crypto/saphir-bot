@@ -67,7 +67,7 @@ QUEUE_PAGE = 10
 REPRISES_MAX = 2            # flux coupé avant la fin : reprises avant d'abandonner le morceau
 DELAI_YTDLP = 60            # s : au-delà, YouTube ne répond pas, on abandonne
 
-# Annonces « Saphir Radio » jouées à l'arrivée dans le vocal (voix générée une fois pour
+# Annonces « Saphir Radio » jouées à l'arrivée dans le vocal (voix Rémy (Microsoft, nouvelle génération) générée une fois pour
 # toutes, livrée avec le bot : rien n'est appelé en ligne). Ajouter un .ogg dans ce
 # dossier suffit à l'ajouter au tirage ; le vider désactive l'annonce.
 JINGLES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "jingles")
