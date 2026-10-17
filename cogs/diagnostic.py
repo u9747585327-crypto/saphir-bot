@@ -43,6 +43,12 @@ class Diagnostic(commands.Cog):
             lines.append("⚠️ Le rôle du bot est peut-être trop bas dans la liste — monte-le pour éviter des erreurs de permissions.")
 
         lines.append(f"**Stockage** : ✅ {storage.backend()}")
+        # sans elle, les logs ne peuvent plus dire QUI a fait une action (cogs/logs.py)
+        if guild.me.guild_permissions.view_audit_log:
+            lines.append("**Logs détaillés** : ✅ journal d'audit accessible")
+        else:
+            lines.append("**Logs détaillés** : ❌ il manque la permission « Voir les logs du serveur » "
+                         "— les auteurs des actions sont invisibles")
         lines.append(f"**Chat IA** : {'✅ Groq connecté' if funchat.is_ai_enabled() else '⚠️ Réponses toutes faites (pas de GROQ_API_KEY)'}")
 
         # état des boucles de fond : une tasks.loop morte ne se voit nulle part ailleurs

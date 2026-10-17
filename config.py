@@ -92,6 +92,7 @@ LOG_CHANNELS = {
     "profile": _ch("✏️", "pseudos-avatars"),
     "messages": _ch("💬", "messages"),
     "roles": _ch("🎭", "rôles"),
+    "permissions": _ch("🔐", "permissions"),
     "channels": _ch("📁", "salons"),
     "server": _ch("⚙️", "serveur"),
 }
