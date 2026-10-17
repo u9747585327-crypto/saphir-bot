@@ -67,9 +67,9 @@ QUEUE_PAGE = 10
 REPRISES_MAX = 2            # flux coupé avant la fin : reprises avant d'abandonner le morceau
 DELAI_YTDLP = 60            # s : au-delà, YouTube ne répond pas, on abandonne
 
-# Annonces « Saphir Radio » à l'arrivée dans le vocal et au départ. Voix Rémy (Microsoft,
-# nouvelle génération) générée une fois pour toutes et livrée avec le bot : rien n'est
-# appelé en ligne. Un .ogg ajouté dans assets/jingles/arrivee ou /depart entre dans le
+# Annonces « Saphir Radio » à l'arrivée dans le vocal et au départ. Voix « Léo »
+# (ElevenLabs, modèle Multilingual v2) générée une fois pour toutes et livrée avec le
+# bot : rien n'est appelé en ligne, aucune clé n'est nécessaire sur le serveur. Un .ogg ajouté dans assets/jingles/arrivee ou /depart entre dans le
 # tirage ; vider un dossier désactive l'annonce correspondante.
 JINGLES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "jingles")
 
