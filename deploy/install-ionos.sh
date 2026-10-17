@@ -22,11 +22,35 @@ die() { printf '\n\033[1;31mErreur : %s\033[0m\n' "$1" >&2; exit 1; }
 log "Paquets systeme"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq git python3 python3-venv python3-pip sqlite3 ffmpeg ca-certificates
+apt-get install -y -qq git python3 python3-venv python3-pip sqlite3 ffmpeg curl unzip ca-certificates
 
 PY_OK=$(python3 -c 'import sys; print(1 if sys.version_info >= (3, 10) else 0)')
 [[ "$PY_OK" == "1" ]] || die "Python 3.10+ requis, trouve $(python3 -V)"
 log "Python detecte : $(python3 -V)"
+
+# yt-dlp a besoin d'un moteur JavaScript pour resoudre les defis de YouTube ; sans
+# lui, "certains formats peuvent manquer" et des morceaux deviennent illisibles.
+# Deno est celui qu'il active par defaut (2.3 minimum). Ubuntu ne le fournit pas :
+# on prend le binaire officiel.
+DENO_MIN="2.3.0"
+# "|| true" : sous set -e/pipefail, un Deno absent ne doit pas arreter le script
+deno_version() { { command -v deno >/dev/null 2>&1 && deno --version 2>/dev/null | head -1 | awk '{print $2}'; } || true; }
+if [[ "$(printf '%s\n' "$DENO_MIN" "$(deno_version)" | sort -V | head -1)" != "$DENO_MIN" ]] \
+   || [[ -z "$(deno_version)" ]]; then
+  log "Installation de Deno (moteur JavaScript pour YouTube)"
+  case "$(uname -m)" in
+    x86_64)  DENO_ARCH="x86_64" ;;
+    aarch64) DENO_ARCH="aarch64" ;;
+    *) die "architecture non geree par Deno : $(uname -m)" ;;
+  esac
+  DENO_TMP="$(mktemp -d)"
+  curl -fsSL -o "$DENO_TMP/deno.zip" \
+    "https://github.com/denoland/deno/releases/latest/download/deno-${DENO_ARCH}-unknown-linux-gnu.zip"
+  unzip -q -o "$DENO_TMP/deno.zip" -d "$DENO_TMP"
+  install -m 755 "$DENO_TMP/deno" /usr/local/bin/deno
+  rm -rf "$DENO_TMP"
+fi
+log "Deno : $(deno_version)"
 
 log "Utilisateur systeme $SERVICE_USER"
 id -u "$SERVICE_USER" &>/dev/null || useradd --system --create-home --home-dir "/home/$SERVICE_USER" --shell /usr/sbin/nologin "$SERVICE_USER"
@@ -43,7 +67,7 @@ else
   rm -rf "$APP_DIR"
   git clone --quiet "$REPO" "$APP_DIR"
 fi
-mkdir -p "$APP_DIR/data"
+mkdir -p "$APP_DIR/data/deno"   # cache de Deno : /home est interdit au service
 
 log "Environnement virtuel + dependances"
 [[ -d "$APP_DIR/.venv" ]] || python3 -m venv "$APP_DIR/.venv"
@@ -51,7 +75,7 @@ log "Environnement virtuel + dependances"
 "$APP_DIR/.venv/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
 # YouTube casse regulierement l'extraction : yt-dlp doit rester a jour, sinon la
 # lecture s'arrete de fonctionner du jour au lendemain.
-"$APP_DIR/.venv/bin/pip" install --quiet --upgrade yt-dlp
+"$APP_DIR/.venv/bin/pip" install --quiet --upgrade "yt-dlp[default]"
 
 NEEDS_ENV=0
 if [[ ! -f "$APP_DIR/.env" ]]; then

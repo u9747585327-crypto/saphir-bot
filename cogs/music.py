@@ -6,18 +6,40 @@ d'une simple recherche texte.
 Fonctionnement : yt-dlp résout le lien en flux audio, ffmpeg le décode, discord.py
 l'envoie dans le vocal. Un lecteur indépendant par serveur, avec sa file d'attente.
 
-Deux choix d'implémentation qui méritent une explication :
+Les choix d'implémentation qui méritent une explication :
 
 - **L'URL du flux est résolue au dernier moment**, juste avant de jouer le morceau, et
   pas au moment où on l'ajoute à la file. Les URLs de flux YouTube expirent au bout de
   quelques heures : les résoudre à l'avance casserait les longues files d'attente.
-- **Les playlists sont lues à plat** (`extract_flat`) : on récupère juste les titres et
-  les identifiants, sans interroger YouTube pour chaque morceau. Ajouter une playlist de
-  100 titres prend une seconde au lieu d'une minute.
+- **Les playlists sont lues à plat** (`--flat-playlist`) : on récupère juste les titres
+  et les identifiants, sans interroger YouTube pour chaque morceau. Ajouter une playlist
+  de 100 titres prend une seconde au lieu d'une minute.
+- **yt-dlp tourne dans un processus à part**, pas dans un thread du bot. Son extraction
+  est du Python lourd qui monopolise l'interpréteur ; dans le même processus, elle
+  affamait le lecteur audio, qui doit envoyer un paquet toutes les 20 ms : le son
+  hachait dès que quelqu'un faisait /play pendant un morceau.
+- **ffmpeg reçoit les en-têtes HTTP de yt-dlp.** Le lien du flux est lié à l'IP et au
+  navigateur annoncés pendant l'extraction ; sans le même User-Agent, YouTube le
+  refuse par intermittence et ffmpeg s'arrête aussitôt : le morceau était sauté sans un
+  mot.
+- **ffmpeg encode lui-même l'Opus** (FFmpegOpusAudio), volume compris. Python n'a plus
+  qu'à relayer les paquets, au lieu de décoder, régler le volume et réencoder chaque
+  tranche de 20 ms sur un seul cœur partagé avec les autres bots. Changer de volume
+  relance le flux à la même position.
+- **Un flux coupé avant la fin est repris là où il s'est arrêté**, avec un lien neuf,
+  jusqu'à deux fois ; ensuite on le dit, au lieu de passer en silence au suivant.
+
+yt-dlp a besoin d'un moteur JavaScript (Deno) et de yt-dlp-ejs pour résoudre les défis
+de YouTube ; sans eux il continue, mais « certains formats peuvent manquer » — c'était
+une cause de morceaux impossibles à lire. Les deux sont installés par
+deploy/install-ionos.sh.
 """
 
 import asyncio
+import json
 import random
+import shlex
+import sys
 import time
 from urllib.parse import parse_qs, urlparse
 
@@ -34,34 +56,23 @@ except ImportError:  # dépendance absente : le cog se charge mais prévient pro
     yt_dlp = None
 
 
-# Options de recherche/extraction. source_address force l'IPv4 : beaucoup d'hébergeurs
-# ont une IPv6 que YouTube bloque, ce qui donne des erreurs incompréhensibles.
-YTDL_SEARCH = {
-    "format": "bestaudio/best",
-    "quiet": True,
-    "no_warnings": True,
-    "default_search": "ytsearch",
-    "extract_flat": "in_playlist",
-    "skip_download": True,
-    "source_address": "0.0.0.0",
-}
-
-YTDL_STREAM = {
-    "format": "bestaudio/best",
-    "quiet": True,
-    "no_warnings": True,
-    "noplaylist": True,
-    "skip_download": True,
-    "source_address": "0.0.0.0",
-}
-
 # -reconnect : si le flux coupe (réseau, CDN), ffmpeg reprend au lieu de s'arrêter net.
-FFMPEG_BEFORE = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
-FFMPEG_OPTIONS = "-vn"
+FFMPEG_BEFORE = ("-reconnect 1 -reconnect_streamed 1 -reconnect_on_network_error 1 "
+                 "-reconnect_delay_max 5 -nostdin")
 
 IDLE_TIMEOUT = 300          # 5 min sans rien jouer : le bot quitte le vocal
 MAX_QUEUE = 500
 QUEUE_PAGE = 10
+REPRISES_MAX = 2            # flux coupé avant la fin : reprises avant d'abandonner le morceau
+DELAI_YTDLP = 60            # s : au-delà, YouTube ne répond pas, on abandonne
+
+
+def horodatage(seconds) -> str:
+    """Position dans un morceau : 0 -> 0:00 (format_duration, lui, affiche « live »)."""
+    seconds = int(max(0, seconds or 0))
+    heures, reste = divmod(seconds, 3600)
+    minutes, secondes = divmod(reste, 60)
+    return f"{heures}:{minutes:02d}:{secondes:02d}" if heures else f"{minutes}:{secondes:02d}"
 
 
 def format_duration(seconds) -> str:
@@ -90,10 +101,52 @@ class Track:
         self.thumbnail = thumbnail
 
 
-def _extract(query, options):
-    """Appel bloquant de yt-dlp, à lancer dans un thread."""
-    with yt_dlp.YoutubeDL(options) as ydl:
-        return ydl.extract_info(query, download=False)
+def message_erreur(sortie: str) -> str:
+    """Traduit la dernière erreur de yt-dlp en une phrase compréhensible sur Discord."""
+    erreurs = [l for l in sortie.splitlines() if "ERROR" in l]
+    brut = erreurs[-1] if erreurs else sortie.strip().splitlines()[-1] if sortie.strip() else ""
+    bas = brut.lower()
+    if "not a bot" in bas or "confirm you" in bas:
+        return "YouTube bloque temporairement le serveur (vérification anti-bot), réessaie dans quelques minutes"
+    if "confirm your age" in bas or "age-restricted" in bas or "inappropriate" in bas:
+        return "vidéo soumise à une limite d'âge, impossible à lire sans compte"
+    if "private video" in bas:
+        return "vidéo privée"
+    if "video unavailable" in bas or "has been removed" in bas or "not available" in bas:
+        return "vidéo indisponible (supprimée, ou bloquée dans ce pays)"
+    if "requested format is not available" in bas:
+        return "aucun format audio disponible pour cette vidéo"
+    if "is live" in bas and "premiere" in bas:
+        return "première pas encore commencée"
+    brut = brut.split("ERROR:", 1)[-1].strip()
+    return brut[:200] or "erreur inconnue de yt-dlp"
+
+
+async def _yt_dlp(*args) -> dict:
+    """Lance yt-dlp dans un processus séparé et renvoie son JSON (-J).
+
+    `--` sépare les options du lien : sans lui, une « recherche » commençant par un
+    tiret serait lue comme une option de yt-dlp, dont certaines exécutent des
+    commandes sur le serveur. Les avertissements partent dans les logs du service :
+    c'est leur absence qui avait masqué le moteur JavaScript manquant.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "yt_dlp", "-J", "--force-ipv4", "--no-progress", *args,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        sortie, erreurs = await asyncio.wait_for(proc.communicate(), DELAI_YTDLP)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise RuntimeError("YouTube ne répond pas (délai dépassé)")
+    texte = erreurs.decode("utf-8", "replace")
+    for ligne in texte.splitlines():
+        if "WARNING" in ligne or "ERROR" in ligne:
+            print(f"[musique] yt-dlp : {ligne[:300]}")
+    if proc.returncode != 0 or not sortie.strip():
+        raise RuntimeError(message_erreur(texte))
+    return json.loads(sortie)
 
 
 def url_de_entree(entry) -> str:
@@ -142,10 +195,10 @@ async def search(query, requester_id, toute_la_playlist=False):
     `&list=` derrière lui. Les playlists ne sont développées que si l'utilisateur l'a
     explicitement demandé, ou si le lien est un lien de playlist pur.
     """
-    options = dict(YTDL_SEARCH)
-    options["noplaylist"] = not (toute_la_playlist or lien_de_playlist(query))
-
-    info = await asyncio.to_thread(_extract, query, options)
+    args = ["--flat-playlist", "--default-search", "ytsearch"]
+    if not (toute_la_playlist or lien_de_playlist(query)):
+        args.append("--no-playlist")
+    info = await _yt_dlp(*args, "--", query)
 
     if info is None:
         return []
@@ -174,11 +227,9 @@ async def search(query, requester_id, toute_la_playlist=False):
 
 
 async def resolve_stream(track):
-    """Renvoie l'URL du flux audio pour ce morceau, résolue à l'instant."""
-    info = await asyncio.to_thread(_extract, track.url, YTDL_STREAM)
-    if info is None:
-        raise RuntimeError("yt-dlp n'a rien renvoyé pour ce lien")
-    if "entries" in info and info["entries"]:
+    """Résout à l'instant le flux audio de ce morceau : (url, en-têtes HTTP)."""
+    info = await _yt_dlp("-f", "bestaudio/best", "--no-playlist", "--", track.url)
+    if info.get("entries"):
         info = info["entries"][0]
     if not track.thumbnail:
         track.thumbnail = info.get("thumbnail")
@@ -187,7 +238,21 @@ async def resolve_stream(track):
     url = info.get("url")
     if not url:
         raise RuntimeError("aucun flux audio trouvé pour ce lien")
-    return url
+    return url, info.get("http_headers") or {}
+
+
+def options_ffmpeg(entetes: dict, debut: float, volume: float) -> tuple:
+    """(before_options, options) pour FFmpegOpusAudio.
+
+    Les en-têtes passent par -headers, séparés par CRLF comme l'attend ffmpeg ;
+    shlex.quote les protège, discord.py redécoupant la chaîne avec shlex.split."""
+    avant = FFMPEG_BEFORE
+    bloc = "".join(f"{k}: {v}\r\n" for k, v in entetes.items())
+    if bloc:
+        avant += " -headers " + shlex.quote(bloc)
+    if debut > 0:
+        avant += f" -ss {debut:.2f}"
+    return avant, f"-vn -af volume={volume:.2f}"
 
 
 class Player:
@@ -201,10 +266,16 @@ class Player:
 
         self.queue = []
         self.current = None
-        self.source = None
-        self.started_at = 0.0
         self.volume = 0.5
         self.loop_mode = "off"          # off | track | queue
+
+        # position dans le morceau, pauses et reprises comprises
+        self._offset = 0.0
+        self._debut_segment = None      # monotonic() du dernier démarrage, None si à l'arrêt
+        self._en_pause = False
+        self._passer = False            # /skip : fin voulue, à ne pas prendre pour une coupure
+        self._relance = False           # /volume : relancer le flux au même endroit
+        self._flux = None               # (url, en-têtes) du morceau en cours
 
         self._added = asyncio.Event()   # réveille la boucle quand on ajoute un morceau
         self._finished = asyncio.Event()  # posé par ffmpeg quand le morceau se termine
@@ -244,30 +315,22 @@ class Player:
 
                 track = self.queue.pop(0)
                 self.current = track
+                self._passer = self._relance = self._en_pause = False
 
                 if self.voice is None or not self.voice.is_connected():
                     await self.cleanup()
                     return
 
                 try:
-                    stream = await resolve_stream(track)
+                    url, entetes = await resolve_stream(track)
                 except Exception as e:
-                    await self.annonce(f"⚠️ Impossible de lire **{track.title}** ({e}) — je passe au suivant.")
+                    await self.annonce(f"⚠️ Impossible de lire **{track.title}** : {e}. Je passe au suivant.")
                     self.current = None
                     continue
 
-                # PCM + PCMVolumeTransformer : un peu plus coûteux en CPU que l'Opus
-                # direct, mais c'est ce qui permet de changer le volume en direct.
-                audio = discord.FFmpegPCMAudio(stream, before_options=FFMPEG_BEFORE, options=FFMPEG_OPTIONS)
-                self.source = discord.PCMVolumeTransformer(audio, volume=self.volume)
-
-                self._finished.clear()
-                self.voice.play(self.source, after=self._apres_lecture)
-                self.started_at = time.time()
                 await self.annonce(embed=self.embed_lecture(track))
-
-                await self._finished.wait()
-                self.source = None
+                await self._jouer(track, url, entetes)
+                self._flux = None
 
                 if self._stopped:
                     return
@@ -288,6 +351,98 @@ class Player:
         if error:
             print(f"⚠️ Lecture interrompue sur {self.guild.name} : {error}")
         self.bot.loop.call_soon_threadsafe(self._finished.set)
+
+    # ── lecture d'un morceau ─────────────────────────────────────────────────
+
+    def position(self) -> float:
+        """Secondes écoulées dans le morceau, pauses exclues."""
+        if self._debut_segment is None:
+            return self._offset
+        return self._offset + (time.monotonic() - self._debut_segment)
+
+    def _source(self, url, entetes, debut):
+        avant, options = options_ffmpeg(entetes, debut, self.volume)
+        salon = self.voice.channel if self.voice else None
+        # inutile d'encoder au-dessus de ce que le salon diffuse
+        debit = min(128, max(32, salon.bitrate // 1000)) if salon is not None else 128
+        return discord.FFmpegOpusAudio(url, bitrate=debit, before_options=avant, options=options)
+
+    def _demarrer(self, url, entetes, debut):
+        self._finished.clear()
+        self.voice.play(self._source(url, entetes, debut), after=self._apres_lecture)
+        self._offset = debut
+        if self._en_pause:              # volume changé pendant une pause : on y reste
+            self.voice.pause()
+            self._debut_segment = None
+        else:
+            self._debut_segment = time.monotonic()
+
+    async def _jouer(self, track, url, entetes):
+        """Joue le morceau jusqu'au bout. Un flux coupé avant la fin (connexion fermée
+        par YouTube, lien refusé dès le départ) est repris à la même position avec un
+        lien neuf ; après REPRISES_MAX échecs, on prévient et on passe au suivant."""
+        debut, reprises = 0.0, 0
+        self._flux = (url, entetes)
+        while True:
+            if self.voice is None or not self.voice.is_connected():
+                return
+            try:
+                self._demarrer(url, entetes, debut)
+            except discord.ClientException as e:
+                print(f"⚠️ [musique] lecture impossible sur {self.guild.name} : {e}")
+                return
+            await self._finished.wait()
+            pos = self.position()
+            self._debut_segment = None
+            if self._stopped or self._passer:
+                return
+            if self._relance:
+                self._relance = False
+                debut = pos
+                continue
+            if track.duration is None or pos >= track.duration - 5:
+                return                  # fin normale (ou direct, sans durée connue)
+            if reprises >= REPRISES_MAX:
+                await self.annonce(f"⚠️ YouTube a coupé **{track.title}** à {horodatage(pos)}, "
+                                   "je passe au suivant.")
+                return
+            reprises += 1
+            print(f"[musique] flux de « {track.title} » coupé à {pos:.0f} s sur {track.duration} s, "
+                  f"reprise {reprises}/{REPRISES_MAX}")
+            try:
+                url, entetes = await resolve_stream(track)
+            except Exception as e:
+                await self.annonce(f"⚠️ Impossible de reprendre **{track.title}** : {e}. Je passe au suivant.")
+                return
+            self._flux = (url, entetes)
+            debut = pos
+
+    def pause(self):
+        self._offset = self.position()
+        self._debut_segment = None
+        self._en_pause = True
+        self.voice.pause()
+
+    def reprendre(self):
+        self._debut_segment = time.monotonic()
+        self._en_pause = False
+        self.voice.resume()
+
+    def passer(self):
+        self._passer = True
+        self.voice.stop()               # déclenche la suite de la boucle via after=
+
+    def changer_volume(self, volume: float) -> bool:
+        """Le volume est appliqué par ffmpeg : on relance le flux à la même position.
+        Renvoie True si un morceau a été relancé."""
+        self.volume = volume
+        if self._flux is None or self.voice is None:
+            return False
+        if not (self.voice.is_playing() or self.voice.is_paused()):
+            return False
+        self._relance = True
+        self.voice.stop()
+        return True
 
     # ── affichage ────────────────────────────────────────────────────────────
 
@@ -461,7 +616,7 @@ class Music(commands.Cog):
             await interaction.response.send_message("❌ Rien à passer.", ephemeral=True)
             return
         titre = player.current.title if player.current else "le morceau"
-        player.voice.stop()  # déclenche la suite de la boucle via after=
+        player.passer()
         await interaction.response.send_message(f"⏭️ **{titre}** passé.")
 
     @app_commands.command(name="stop", description="Arrête tout, vide la file et quitte le vocal")
@@ -482,7 +637,7 @@ class Music(commands.Cog):
         if not player.voice.is_playing():
             await interaction.response.send_message("❌ Rien n'est en cours de lecture.", ephemeral=True)
             return
-        player.voice.pause()
+        player.pause()
         await interaction.response.send_message("⏸️ En pause. `/resume` pour reprendre.")
 
     @app_commands.command(name="resume", description="Reprend la lecture")
@@ -493,7 +648,7 @@ class Music(commands.Cog):
         if not player.voice.is_paused():
             await interaction.response.send_message("❌ Ce n'est pas en pause.", ephemeral=True)
             return
-        player.voice.resume()
+        player.reprendre()
         await interaction.response.send_message("▶️ C'est reparti.")
 
     @app_commands.command(name="queue", description="Affiche la file d'attente")
@@ -505,7 +660,7 @@ class Music(commands.Cog):
 
         lignes = []
         if player.current:
-            ecoule = format_duration(time.time() - player.started_at)
+            ecoule = horodatage(player.position())
             lignes.append(
                 f"**En cours** · [{player.current.title}]({player.current.url}) "
                 f"`{ecoule} / {format_duration(player.current.duration)}`"
@@ -537,7 +692,7 @@ class Music(commands.Cog):
         embed = player.embed_lecture(player.current)
         embed.add_field(
             name="Avancement",
-            value=f"`{format_duration(time.time() - player.started_at)} / {format_duration(player.current.duration)}`",
+            value=f"`{horodatage(player.position())} / {format_duration(player.current.duration)}`",
             inline=False,
         )
         await interaction.response.send_message(embed=embed)
@@ -575,10 +730,9 @@ class Music(commands.Cog):
         player = await self.exige_player(interaction)
         if player is None:
             return
-        player.volume = niveau / 100
-        if player.source is not None:
-            player.source.volume = player.volume
-        await interaction.response.send_message(f"🔊 Volume réglé sur {niveau} %.")
+        relance = player.changer_volume(niveau / 100)
+        suite = " Le morceau reprend à la même position." if relance else ""
+        await interaction.response.send_message(f"🔊 Volume réglé sur {niveau} %.{suite}")
 
     # /clear est déjà pris par cogs/moderation.py (suppression de messages) : deux
     # commandes du même nom empêchent le bot de démarrer.

@@ -13,6 +13,9 @@ EnvironmentFile=/opt/saphir-bot/.env
 # Le bot affiche des emojis dans ses logs : sans ca, un serveur en locale C
 # ferait planter le moindre print().
 Environment=PYTHONIOENCODING=utf-8
+# Deno ecrit un cache d'analyse ; par defaut dans ~/.cache, inaccessible ici
+# (ProtectHome) : sans ca, yt-dlp ne peut pas resoudre les defis de YouTube.
+Environment=DENO_DIR=/opt/saphir-bot/data/deno
 ExecStart=/opt/saphir-bot/.venv/bin/python -u main.py
 
 # redemarrage automatique : coupure reseau, kill OOM, crash non rattrape...
