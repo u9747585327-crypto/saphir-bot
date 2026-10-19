@@ -24,10 +24,8 @@ Garde-fous, pour que ça reste une blague et pas du harcèlement :
 """
 
 import asyncio
-import base64
 import os
 import random
-import string
 import time
 
 import discord
@@ -64,7 +62,7 @@ BRUITAGES = {
 # RÉEL, et seulement ce que Discord ou le serveur rendent déjà visible : avatar,
 # bannière, noms, anciens pseudos (notés par Saphir + journal d'audit du serveur),
 # dates de création et d'arrivée, rôles, badges, boost, niveau, activité des 7 derniers
-# jours. INVENTÉ : IP, opérateur, appareil, mot de passe, recherches, jeton.
+# jours. INVENTÉ : niveau de hack, failles, mot de passe, IP, appareil, fichiers, recherches.
 # Jamais : de recherche hors de Discord (ce serait du vrai doxxing), ni de localisation,
 # même fausse — à côté de vraies infos, elle aurait l'air authentique.
 HISTO_FILE = "data/historique_pseudos.json"
@@ -80,6 +78,16 @@ BADGES = {
 APPAREILS = ["PC portable de 2014 · 47 onglets Chrome ouverts", "iPhone 8 · écran fissuré · 3 % de batterie",
              "PC gamer RGB · 0 jeu terminé", "Samsung en mode économie d'énergie permanent",
              "PC familial partagé avec la petite sœur", "Chromebook de l'école, « emprunté »"]
+MOTS_DE_PASSE = ["iloveyou123", "motdepasse", "azerty", "jaimemamaman", "MonChatSappelleKiwi",
+                 "123soleil", "pizza4ever", "jesuisleplusbeau", "password1"]
+NIVEAUX_HACK = [("Débutant", 23), ("Intermédiaire", 57), ("Expert", 88), ("Élite ☠️", 100)]
+FAILLES = ["Mot de passe écrit sur un post-it collé à l'écran", "Clique sur toutes les pubs « Vous avez gagné un iPhone »",
+           "Même mot de passe depuis 2012", "Webcam sans cache depuis 3 ans",
+           "A prêté son compte Netflix à 14 personnes", "Accepte tous les cookies sans lire",
+           "Wi-Fi « Livebox-Mamie » sans mot de passe", "Antivirus expiré en 2019"]
+DONNEES_VOLEES = ["14 Go de selfies ratés", "son historique YouTube (« tuto danse TikTok » ×47)",
+                  "3 brouillons de déclaration d'amour", "sa playlist « motivation » 100 % Jul",
+                  "un dossier « Devoirs » qui n'en contient aucun", "ses notes du bac (on n'en parlera pas)"]
 RECHERCHES = ["comment devenir drôle", "pourquoi personne me répond sur discord",
               "est-ce que les pâtes c'est un légume", "comment gagner en ranked sans jouer",
               "tuto avoir des amis", "mon chat me juge est-ce normal", "c'est grave de dormir 14h",
@@ -89,19 +97,10 @@ VERT, ROUGE, JAUNE, BLEU, CYAN, GRIS, GRAS, RAZ = (
     "\u001b[1;37m", "\u001b[0m")
 FAI = ["Orange", "Free", "SFR", "Bouygues Telecom"]
 OCTETS_FAI = [78, 79, 80, 82, 83, 86, 88, 90, 92, 109, 176, 185, 212]
-REVELATION_HACK = 30      # s avant la petite ligne « simulation », pour que personne ne panique
 
 
 def _ip():
     return f"{random.choice(OCTETS_FAI)}.{random.randint(1, 254)}.{random.randint(1, 254)}.{random.randint(2, 254)}"
-
-
-def _faux_jeton(user_id: int) -> str:
-    """Au format d'un vrai jeton Discord (ID en base64 . horodatage . signature),
-    mais les deux dernières parties sont tirées au hasard : il ne vaut rien."""
-    alpha = string.ascii_letters + string.digits + "-_"
-    debut = base64.b64encode(str(user_id).encode()).decode().rstrip("=")
-    return f"{debut}.{''.join(random.choices(alpha, k=6))}.{''.join(random.choices(alpha, k=27))}"
 
 
 def _barre(pourcent: int) -> str:
@@ -112,12 +111,11 @@ def _barre(pourcent: int) -> str:
 def inventer(d: dict, membre) -> dict:
     """Les fausses infos de hacker, tirées une fois pour que le terminal et la fiche
     affichent les mêmes."""
-    lettres = string.ascii_lowercase + string.digits
-    longueur = random.randint(8, 13)
     d.update(
         ip=_ip(), serveur=_ip(), fai=random.choice(FAI), appareil=random.choice(APPAREILS),
-        recherches=random.sample(RECHERCHES, 2), jeton=_faux_jeton(membre.id),
-        mdp=random.choice(lettres) + "•" * (longueur - 2) + random.choice(lettres), longueur=longueur,
+        recherches=random.sample(RECHERCHES, 2), mdp=random.choice(MOTS_DE_PASSE),
+        niveau_hack=random.choice(NIVEAUX_HACK), failles=random.sample(FAILLES, 3),
+        volees=random.sample(DONNEES_VOLEES, 2),
     )
     return d
 
@@ -150,8 +148,8 @@ def piratage(membre, d: dict) -> list:
         l[-1] = f"{CYAN}[*]{RAZ} Brute-force du mot de passe {_barre(pct)}"
         images.append((1.1, list(l)))
     l[-1] = f"{CYAN}[*]{RAZ} Brute-force du mot de passe {_barre(100)}"
-    image(1.1, f"{VERT}[+]{RAZ} Mot de passe : {d['mdp']} ({d['longueur']} caractères)")
-    image(1.4, f"{VERT}[+]{RAZ} Jeton de session : {JAUNE}{d['jeton']}{RAZ}")
+    image(1.1, f"{VERT}[+]{RAZ} Mot de passe : {JAUNE}{d['mdp']}{RAZ}")
+    image(1.3, f"{ROUGE}[!]{RAZ} {len(d['failles'])} failles critiques exploitées")
     image(1.3, f"{GRAS}[✓] Dossier compilé. Envoi vers {d['serveur']}.{RAZ}")
     return images
 
@@ -159,7 +157,7 @@ def piratage(membre, d: dict) -> list:
 def embed_dossier(membre, d: dict) -> discord.Embed:
     """La fiche finale : le vrai profil, puis les « données piratées »."""
     fmt = discord.utils.format_dt
-    e = discord.Embed(title=f"📁 Dossier — {membre.display_name}", color=discord.Color(COLORS["danger"]))
+    e = discord.Embed(title=f"💻 HACK RÉUSSI : {membre.display_name}", color=discord.Color(COLORS["danger"]))
     e.set_thumbnail(url=membre.display_avatar.url)
     if d.get("banniere"):
         e.set_image(url=d["banniere"])
@@ -187,11 +185,14 @@ def embed_dossier(membre, d: dict) -> discord.Embed:
     if d.get("badges"):
         act.append("Badges : " + ", ".join(d["badges"]))
     e.add_field(name="📊 Activité", value="\n".join(act) or "un fantôme : aucune trace", inline=False)
-    e.add_field(name="💀 Données piratées", inline=False, value=(
-        f"IP : `{d['ip']}` ({d['fai']})\nAppareil : {d['appareil']}\n"
-        f"Mot de passe : `{d['mdp']}`\n"
+    nom_niveau, pct = d["niveau_hack"]
+    e.add_field(name="☠️ Niveau de hack", inline=False, value=f"`{_barre(pct)}` **{nom_niveau}**")
+    e.add_field(name="🕳️ Failles exploitées", inline=False, value="\n".join(f"• {f}" for f in d["failles"]))
+    e.add_field(name="💀 Données volées", inline=False, value=(
+        f"Mot de passe : `{d['mdp']}`\nIP : `{d['ip']}` ({d['fai']})\nAppareil : {d['appareil']}\n"
+        f"Fichiers : {d['volees'][0]}, {d['volees'][1]}\n"
         f"Dernières recherches : « {d['recherches'][0]} », « {d['recherches'][1]} »"))
-    e.set_footer(text="Saphir · accès root")
+    e.set_footer(text="Résultat 100% fictif pour rire entre potes")
     return e
 
 
@@ -348,13 +349,8 @@ class Farces(commands.Cog):
             for attente, lignes in piratage(membre, d):
                 await asyncio.sleep(attente)
                 await msg.edit(content=f"{entete}\n{bloc_terminal(lignes)}")
-            fiche = embed_dossier(membre, d)
             await asyncio.sleep(1.2)
-            await msg.edit(embed=fiche)
-            await asyncio.sleep(REVELATION_HACK)
-            fiche.set_footer(text="Simulation de Saphir · profil et activité : infos publiques du serveur · "
-                                  "le reste est inventé")
-            await msg.edit(embed=fiche)
+            await msg.edit(embed=embed_dossier(membre, d))
         except discord.HTTPException:
             return
 
