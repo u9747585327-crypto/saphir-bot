@@ -10,8 +10,8 @@ et livrés dans assets/farces : rien n'est appelé en ligne.
 
 Garde-fous, pour que ça reste une blague et pas du harcèlement :
 - /pas-touche : n'importe qui peut refuser d'être visé (bascule, mémorisée) ;
-- délais : une farce texte toutes les 20 s et une vocale toutes les 45 s par membre,
-  et une même cible n'est pas visée deux fois en 30 s ;
+- délais : une farce texte toutes les 10 s et une vocale toutes les 15 s par membre
+  (le staff en est dispensé), et une même cible n'est pas visée deux fois en 30 s ;
 - les bots ne sont jamais visés ;
 - en vocal, il faut être soi-même dans le salon, et un son ne coupe jamais Saphir Radio ;
 - /perroquet ne mentionne personne en répétant (pas de ping en boucle) ;
@@ -34,9 +34,9 @@ from storage import aload_json, asave_json
 
 FARCES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "farces")
 
-DELAI_TEXTE = 20
-DELAI_VOCAL = 45
-DELAI_CIBLE = 30
+DELAI_TEXTE = 10
+DELAI_VOCAL = 15
+DELAI_CIBLE = 30          # protège la victime : le staff n'en est pas dispensé
 DUREE_SURNOM = 600
 DUREE_PERROQUET = 60
 REPETITIONS_PERROQUET = 6
@@ -121,8 +121,12 @@ class Farces(commands.Cog):
             await interaction.response.send_message(texte, ephemeral=True)
             return False
 
+        # le délai du lanceur sert à éviter le spam ; le staff (admin, gestion du serveur)
+        # en est dispensé. Les protections de la cible, elles, s'appliquent à tous.
+        droits = interaction.user.guild_permissions
+        staff = droits.administrator or droits.manage_guild
         delai = DELAI_VOCAL if vocal else DELAI_TEXTE
-        attente = self._attente(("lanceur", interaction.user.id), delai)
+        attente = 0 if staff else self._attente(("lanceur", interaction.user.id), delai)
         if attente:
             return await non(f"⏳ Doucement : prochaine farce dans {attente:.0f} s.")
         if cible is not None:
