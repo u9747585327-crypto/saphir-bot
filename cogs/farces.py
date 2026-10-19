@@ -32,7 +32,8 @@ from discord.ext import commands, tasks
 
 from cogs._shared import handle_app_error
 from cogs.logs import resolve_log_channel
-from config import COLORS, GUILD_SETTINGS_FILE
+from config import COLORS, GUILD_SETTINGS_FILE, LEVELS_DATA_FILE
+from services import message_store
 from storage import aload_json, asave_json
 
 FARCES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "farces")
@@ -55,10 +56,30 @@ BRUITAGES = {
     "applaudissements": "👏 Applaudissements",
 }
 
-# ── /hack : un terminal qui ressemble au vrai ─────────────────────────────────
-# Seules l'ID Discord et la date de création du compte sont réelles (informations
-# publiques). Tout le reste est inventé. Volontairement absent : toute localisation,
-# même fausse — à côté d'un vrai pseudo, ça ressemble trop à du doxxing.
+# ── /hack : un vrai dossier, mêlé à un faux piratage ──────────────────────────
+# RÉEL, et seulement ce que Discord ou le serveur rendent déjà visible : avatar,
+# bannière, noms, anciens pseudos (notés par Saphir + journal d'audit du serveur),
+# dates de création et d'arrivée, rôles, badges, boost, niveau, activité des 7 derniers
+# jours. INVENTÉ : IP, opérateur, appareil, mot de passe, recherches, jeton.
+# Jamais : de recherche hors de Discord (ce serait du vrai doxxing), ni de localisation,
+# même fausse — à côté de vraies infos, elle aurait l'air authentique.
+HISTO_FILE = "data/historique_pseudos.json"
+HISTO_MAX = 15
+BADGES = {
+    "staff": "Staff Discord", "partner": "Partenaire Discord", "hypesquad": "HypeSquad Events",
+    "bug_hunter": "Chasseur de bugs", "bug_hunter_level_2": "Chasseur de bugs niv. 2",
+    "hypesquad_bravery": "HypeSquad Bravery", "hypesquad_brilliance": "HypeSquad Brilliance",
+    "hypesquad_balance": "HypeSquad Balance", "early_supporter": "Soutien de la première heure",
+    "verified_bot_developer": "Développeur de bot vérifié", "active_developer": "Développeur actif",
+    "discord_certified_moderator": "Modérateur certifié",
+}
+APPAREILS = ["PC portable de 2014 · 47 onglets Chrome ouverts", "iPhone 8 · écran fissuré · 3 % de batterie",
+             "PC gamer RGB · 0 jeu terminé", "Samsung en mode économie d'énergie permanent",
+             "PC familial partagé avec la petite sœur", "Chromebook de l'école, « emprunté »"]
+RECHERCHES = ["comment devenir drôle", "pourquoi personne me répond sur discord",
+              "est-ce que les pâtes c'est un légume", "comment gagner en ranked sans jouer",
+              "tuto avoir des amis", "mon chat me juge est-ce normal", "c'est grave de dormir 14h",
+              "acheter des abonnés pas cher", "comment effacer son historique"]
 VERT, ROUGE, JAUNE, BLEU, CYAN, GRIS, GRAS, RAZ = (
     "\u001b[0;32m", "\u001b[0;31m", "\u001b[0;33m", "\u001b[0;34m", "\u001b[0;36m", "\u001b[0;30m",
     "\u001b[1;37m", "\u001b[0m")
@@ -84,42 +105,90 @@ def _barre(pourcent: int) -> str:
     return f"[{'█' * plein}{'░' * (20 - plein)}] {pourcent:3d}%"
 
 
-def piratage(membre) -> list:
-    """Les images successives du terminal : liste de (attente en s, lignes)."""
-    ip, serveur = _ip(), _ip()
+def inventer(d: dict, membre) -> dict:
+    """Les fausses infos de hacker, tirées une fois pour que le terminal et la fiche
+    affichent les mêmes."""
+    lettres = string.ascii_lowercase + string.digits
     longueur = random.randint(8, 13)
+    d.update(
+        ip=_ip(), serveur=_ip(), fai=random.choice(FAI), appareil=random.choice(APPAREILS),
+        recherches=random.sample(RECHERCHES, 2), jeton=_faux_jeton(membre.id),
+        mdp=random.choice(lettres) + "•" * (longueur - 2) + random.choice(lettres), longueur=longueur,
+    )
+    return d
+
+
+def piratage(membre, d: dict) -> list:
+    """Les images successives du terminal : liste de (attente en s, lignes)."""
     images, l = [], [f"{VERT}root@saphir{RAZ}:{BLEU}~{RAZ}# ./breach --target {membre.name}"]
 
     def image(attente, *nouvelles):
         l.extend(nouvelles)
         images.append((attente, list(l)))
 
-    image(0)
-    image(1.4, f"{CYAN}[*]{RAZ} Résolution du compte Discord…",
+    profil = ["avatar"] + (["bannière"] if d.get("banniere") else []) + \
+             ([f"{len(d['badges'])} badge(s)"] if d.get("badges") else [])
+    image(1.2, f"{CYAN}[*]{RAZ} Résolution du compte Discord…",
           f"    ID {membre.id} · créé le {membre.created_at:%d/%m/%Y}")
-    image(1.6, f"{CYAN}[*]{RAZ} Corrélation adresse IP… {VERT}{ip}{RAZ} ({random.choice(FAI)})")
-    ports = [("22/tcp", "ssh"), ("80/tcp", "http"), ("443/tcp", "https"), ("3389/tcp", "ms-wbt-server"),
-             ("5900/tcp", "vnc")]
-    lignes_ports = [f"    {GRIS}PORT      ÉTAT     SERVICE{RAZ}"]
-    for port, service in ports:
-        etat = random.choice([f"{VERT}ouvert {RAZ}", f"{ROUGE}fermé  {RAZ}", f"{JAUNE}filtré {RAZ}"])
-        lignes_ports.append(f"    {port:<9} {etat}  {service}")
-    image(1.8, f"{CYAN}[*]{RAZ} Scan des ports de {ip}", *lignes_ports)
+    image(1.3, f"{VERT}[+]{RAZ} Profil récupéré : {', '.join(profil)}")
+    n = len(d.get("pseudos") or [])
+    image(1.3, f"{VERT}[+]{RAZ} Historique : {n} ancien(s) pseudo(s) retrouvé(s)" if n
+          else f"{JAUNE}[-]{RAZ} Historique : aucun ancien pseudo (il se cache bien)")
+    activite = []
+    if d.get("messages"):
+        activite.append(f"{d['messages']} messages en 7 j")
+    if d.get("niveau") is not None:
+        activite.append(f"niveau {d['niveau']}")
+    image(1.3, f"{CYAN}[*]{RAZ} Analyse d'activité : {', '.join(activite) or 'aucune trace'}")
+    image(1.5, f"{CYAN}[*]{RAZ} Corrélation adresse IP… {VERT}{d['ip']}{RAZ} ({d['fai']})")
     l.append(f"{CYAN}[*]{RAZ} Brute-force du mot de passe {_barre(0)}")
-    for pct in (23, 58, 91):
+    for pct in (31, 74):
         l[-1] = f"{CYAN}[*]{RAZ} Brute-force du mot de passe {_barre(pct)}"
-        images.append((1.2, list(l)))
+        images.append((1.1, list(l)))
     l[-1] = f"{CYAN}[*]{RAZ} Brute-force du mot de passe {_barre(100)}"
-    image(1.2, f"{VERT}[+]{RAZ} Mot de passe trouvé : {'•' * longueur} ({longueur} caractères)")
-    image(1.6, f"{VERT}[+]{RAZ} Jeton de session : {JAUNE}{_faux_jeton(membre.id)}{RAZ}")
-    image(1.6, f"{CYAN}[*]{RAZ} Extraction : {random.randint(800, 9000)} messages, "
-               f"{random.randint(40, 600)} images, {random.randint(3, 90)} notes vocales")
-    l.append(f"{CYAN}[*]{RAZ} Envoi vers {serveur} {_barre(0)}")
-    for pct in (41, 100):
-        l[-1] = f"{CYAN}[*]{RAZ} Envoi vers {serveur} {_barre(pct)}"
-        images.append((1.3, list(l)))
-    image(1.2, f"{GRAS}[✓] Accès total obtenu. Connexion fermée.{RAZ}")
+    image(1.1, f"{VERT}[+]{RAZ} Mot de passe : {d['mdp']} ({d['longueur']} caractères)")
+    image(1.4, f"{VERT}[+]{RAZ} Jeton de session : {JAUNE}{d['jeton']}{RAZ}")
+    image(1.3, f"{GRAS}[✓] Dossier compilé. Envoi vers {d['serveur']}.{RAZ}")
     return images
+
+
+def embed_dossier(membre, d: dict) -> discord.Embed:
+    """La fiche finale : le vrai profil, puis les « données piratées »."""
+    fmt = discord.utils.format_dt
+    e = discord.Embed(title=f"📁 Dossier — {membre.display_name}", color=discord.Color(COLORS["danger"]))
+    e.set_thumbnail(url=membre.display_avatar.url)
+    if d.get("banniere"):
+        e.set_image(url=d["banniere"])
+    e.add_field(name="🪪 Identité", inline=False, value=(
+        f"Utilisateur : `{membre.name}`\nNom affiché : {membre.global_name or '—'}\n"
+        f"Pseudo ici : {membre.nick or '—'}\nID : `{membre.id}`"))
+    e.add_field(name="📅 Compte créé", value=f"{fmt(membre.created_at, 'D')}\n{fmt(membre.created_at, 'R')}")
+    if getattr(membre, "joined_at", None):
+        e.add_field(name="🚪 Arrivé ici", value=f"{fmt(membre.joined_at, 'D')}\n{fmt(membre.joined_at, 'R')}")
+    roles = [r.mention for r in reversed(membre.roles) if not r.is_default()][:6]
+    e.add_field(name="🎭 Rôles", value=", ".join(roles) or "aucun", inline=False)
+    pseudos = d.get("pseudos") or []
+    e.add_field(name="🕵️ Anciens pseudos", inline=False,
+                value=", ".join(f"`{p}`" for p in pseudos) or "aucun retrouvé")
+    act = []
+    if d.get("niveau") is not None:
+        act.append(f"Niveau {d['niveau']} · {d['vocal_h']:.1f} h en vocal")
+    if d.get("messages"):
+        act.append(f"{d['messages']} messages ces 7 derniers jours"
+                   + (f", surtout dans <#{d['salon']}>" if d.get("salon") else ""))
+    if d.get("dernier"):
+        act.append(f"Dernier message : <t:{int(d['dernier'])}:R>")
+    if getattr(membre, "premium_since", None):
+        act.append(f"Booste le serveur depuis le {fmt(membre.premium_since, 'D')}")
+    if d.get("badges"):
+        act.append("Badges : " + ", ".join(d["badges"]))
+    e.add_field(name="📊 Activité", value="\n".join(act) or "un fantôme : aucune trace", inline=False)
+    e.add_field(name="💀 Données piratées", inline=False, value=(
+        f"IP : `{d['ip']}` ({d['fai']})\nAppareil : {d['appareil']}\n"
+        f"Mot de passe : `{d['mdp']}`\n"
+        f"Dernières recherches : « {d['recherches'][0]} », « {d['recherches'][1]} »"))
+    e.set_footer(text="Saphir · accès root")
+    return e
 
 
 def bloc_terminal(lignes: list) -> str:
@@ -250,18 +319,95 @@ class Farces(commands.Cog):
             return
         await self._discret(interaction)
         await self._tracer(interaction, "hack", membre)
-        images = piratage(membre)
         entete = f"💻 {membre.mention}"
+        invite = f"{VERT}root@saphir{RAZ}:{BLEU}~{RAZ}# ./breach --target {membre.name}"
         try:
-            msg = await interaction.channel.send(f"{entete}\n{bloc_terminal(images[0][1])}")
-            for attente, lignes in images[1:]:
-                await asyncio.sleep(attente)
-                await msg.edit(content=f"{entete}\n{bloc_terminal(lignes)}")
-            await asyncio.sleep(REVELATION_HACK)
-            await msg.edit(content=f"{entete}\n{bloc_terminal(images[-1][1])}\n"
-                                   "-# Simulation de Saphir : aucune donnée réelle n'a été consultée.")
+            msg = await interaction.channel.send(f"{entete}\n{bloc_terminal([invite, f'{CYAN}[*]{RAZ} Initialisation…'])}")
         except discord.HTTPException:
             return
+        d = inventer(await self._dossier(membre), membre)   # pendant que le terminal s'initialise
+        try:
+            for attente, lignes in piratage(membre, d):
+                await asyncio.sleep(attente)
+                await msg.edit(content=f"{entete}\n{bloc_terminal(lignes)}")
+            fiche = embed_dossier(membre, d)
+            await asyncio.sleep(1.2)
+            await msg.edit(embed=fiche)
+            await asyncio.sleep(REVELATION_HACK)
+            fiche.set_footer(text="Simulation de Saphir · profil et activité : infos publiques du serveur · "
+                                  "le reste est inventé")
+            await msg.edit(embed=fiche)
+        except discord.HTTPException:
+            return
+
+    async def _dossier(self, membre) -> dict:
+        """Le vrai : ce que Discord et le serveur rendent déjà visible. Chaque source
+        est facultative ; une qui échoue laisse simplement sa case vide."""
+        guild = membre.guild
+        d = {"pseudos": [], "banniere": None, "niveau": None, "vocal_h": 0.0,
+             "messages": None, "salon": None, "dernier": None, "badges": []}
+        noms = []
+        try:
+            histo = (await aload_json(HISTO_FILE, {})).get(str(membre.id), [])
+            noms += [h["avant"] for h in reversed(histo) if h.get("avant")]
+        except Exception:
+            pass
+        try:  # pseudos portés sur ce serveur : journal d'audit, 45 jours
+            if guild.me.guild_permissions.view_audit_log:
+                async for e in guild.audit_logs(limit=300, action=discord.AuditLogAction.member_update):
+                    if getattr(e.target, "id", None) == membre.id:
+                        noms += [n for n in (getattr(e.changes.after, "nick", None),
+                                             getattr(e.changes.before, "nick", None)) if n]
+        except Exception:
+            pass
+        actuels = {membre.name, getattr(membre, "global_name", None), membre.nick}
+        for n in noms:
+            if n not in actuels and n not in d["pseudos"]:
+                d["pseudos"].append(n)
+        d["pseudos"] = d["pseudos"][:8]
+        try:
+            utilisateur = await self.bot.fetch_user(membre.id)
+            if utilisateur.banner:
+                d["banniere"] = utilisateur.banner.url
+        except Exception:
+            pass
+        try:
+            niveau = (await aload_json(LEVELS_DATA_FILE, {})).get(str(guild.id), {}).get(str(membre.id))
+            if niveau:
+                d["niveau"], d["vocal_h"] = niveau.get("level", 0), niveau.get("voice_seconds", 0) / 3600
+        except Exception:
+            pass
+        try:
+            d["messages"], d["salon"], d["dernier"] = await message_store.stats_auteur(guild.id, membre.id)
+        except Exception:
+            pass
+        try:
+            d["badges"] = [BADGES[nom] for nom, actif in membre.public_flags if actif and nom in BADGES]
+        except Exception:
+            pass
+        return d
+
+    # Historique des noms : Discord n'en fournit aucun, Saphir le tient lui-même.
+    async def _noter_nom(self, user_id: int, quoi: str, avant, apres):
+        if not avant or avant == apres:
+            return
+        data = await aload_json(HISTO_FILE, {})
+        histo = data.get(str(user_id), [])
+        histo.append({"quoi": quoi, "avant": avant, "apres": apres, "quand": time.time()})
+        data[str(user_id)] = histo[-HISTO_MAX:]
+        await asave_json(HISTO_FILE, data)
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if before.nick != after.nick:
+            await self._noter_nom(after.id, "pseudo", before.nick, after.nick)
+
+    @commands.Cog.listener()
+    async def on_user_update(self, before: discord.User, after: discord.User):
+        if before.name != after.name:
+            await self._noter_nom(after.id, "nom d'utilisateur", before.name, after.name)
+        if before.global_name != after.global_name:
+            await self._noter_nom(after.id, "nom affiché", before.global_name, after.global_name)
 
     @app_commands.command(name="fakeban", description="Bannit un membre… pour de faux")
     @app_commands.describe(membre="La victime")

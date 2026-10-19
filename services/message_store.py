@@ -176,6 +176,24 @@ async def lire_plusieurs(ids) -> dict:
     return out
 
 
+def _stats_auteur(guild_id: int, author_id: int):
+    with _lock:
+        db = _conn()
+        n = db.execute("SELECT COUNT(*) FROM messages WHERE guild_id = ? AND author_id = ?",
+                       (guild_id, author_id)).fetchone()[0]
+        top = db.execute("SELECT channel_id, COUNT(*) AS c FROM messages WHERE guild_id = ? AND author_id = ? "
+                         "GROUP BY channel_id ORDER BY c DESC LIMIT 1", (guild_id, author_id)).fetchone()
+        dernier = db.execute("SELECT MAX(created_at) FROM messages WHERE guild_id = ? AND author_id = ?",
+                             (guild_id, author_id)).fetchone()[0]
+    return n, (top[0] if top else None), dernier
+
+
+async def stats_auteur(guild_id: int, author_id: int):
+    """(nombre de messages gardés, salon le plus actif, horodatage du dernier) sur la
+    période conservée (RETENTION_JOURS)."""
+    return await asyncio.to_thread(_stats_auteur, guild_id, author_id)
+
+
 def chemin_fichier(message_id: int, pj: dict):
     """Chemin local de la copie d'une pièce jointe, ou None si elle n'a pas été gardée."""
     if not pj.get("local"):
