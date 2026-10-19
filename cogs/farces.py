@@ -66,7 +66,8 @@ BRUITAGES = {
 # Jamais : de recherche hors de Discord (ce serait du vrai doxxing), ni de localisation,
 # même fausse — à côté de vraies infos, elle aurait l'air authentique.
 HISTO_FILE = "data/historique_pseudos.json"
-HISTO_MAX = 15
+HISTO_MAX = 30
+AUDIT_MAX = 5000          # entrées du journal d'audit parcourues au plus (45 jours de toute façon)
 BADGES = {
     "staff": "Staff Discord", "partner": "Partenaire Discord", "hypesquad": "HypeSquad Events",
     "bug_hunter": "Chasseur de bugs", "bug_hunter_level_2": "Chasseur de bugs niv. 2",
@@ -366,12 +367,22 @@ class Farces(commands.Cog):
             noms += [h["avant"] for h in reversed(histo) if h.get("avant")]
         except Exception:
             pass
-        try:  # pseudos portés sur ce serveur : journal d'audit, 45 jours
+        try:  # pseudos portés sur ce serveur : le journal d'audit ENTIER (45 jours)
+            # Discord ne filtre pas le journal par cible : il faut tout parcourir. Lire
+            # seulement les 300 dernières entrées ratait tout changement un peu ancien
+            # (1 378 entrées member_update en six semaines sur La Famii).
             if guild.me.guild_permissions.view_audit_log:
-                async for e in guild.audit_logs(limit=300, action=discord.AuditLogAction.member_update):
-                    if getattr(e.target, "id", None) == membre.id:
-                        noms += [n for n in (getattr(e.changes.after, "nick", None),
-                                             getattr(e.changes.before, "nick", None)) if n]
+                trouves = []
+                async for e in guild.audit_logs(limit=AUDIT_MAX, action=discord.AuditLogAction.member_update):
+                    if getattr(e.target, "id", None) != membre.id:
+                        continue
+                    if hasattr(e.changes.before, "nick") or hasattr(e.changes.after, "nick"):
+                        trouves.append({"quoi": "pseudo", "avant": getattr(e.changes.before, "nick", None),
+                                        "apres": getattr(e.changes.after, "nick", None),
+                                        "quand": e.created_at.timestamp()})
+                noms += [n for t in trouves for n in (t["apres"], t["avant"]) if n]
+                if trouves:
+                    await self._memoriser(membre.id, trouves)
         except Exception:
             pass
         actuels = {membre.name, getattr(membre, "global_name", None), membre.nick}
@@ -402,6 +413,19 @@ class Farces(commands.Cog):
         return d
 
     # Historique des noms : Discord n'en fournit aucun, Saphir le tient lui-même.
+    async def _memoriser(self, user_id: int, trouves: list):
+        """Garde les pseudos retrouvés dans le journal d'audit : Discord l'efface au bout
+        de 45 jours, Saphir les conserve au-delà."""
+        data = await aload_json(HISTO_FILE, {})
+        histo = data.get(str(user_id), [])
+        deja = {(h.get("avant"), h.get("apres"), int(h.get("quand", 0))) for h in histo}
+        for t in trouves:
+            if (t["avant"], t["apres"], int(t["quand"])) not in deja:
+                histo.append(t)
+        histo.sort(key=lambda h: h.get("quand", 0))
+        data[str(user_id)] = histo[-HISTO_MAX:]
+        await asave_json(HISTO_FILE, data)
+
     async def _noter_nom(self, user_id: int, quoi: str, avant, apres):
         if not avant or avant == apres:
             return
