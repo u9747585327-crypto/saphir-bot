@@ -155,46 +155,75 @@ def piratage(membre, d: dict) -> list:
     return images
 
 
-def embed_dossier(membre, d: dict) -> discord.Embed:
-    """La fiche finale : le vrai profil, puis les « données piratées »."""
+PIED_HACK = "Résultat 100% fictif pour rire entre potes"
+
+
+def carte_dossier(membre, d: dict) -> discord.ui.LayoutView:
+    """La fiche finale, en Components V2 : en-tête avec la photo de profil, le vrai
+    profil, puis le piratage inventé présenté comme un dump de terminal."""
     fmt = discord.utils.format_dt
-    e = discord.Embed(title=f"💻 HACK RÉUSSI : {membre.display_name}", color=discord.Color(COLORS["danger"]))
-    e.set_thumbnail(url=membre.display_avatar.url)
+    vue = discord.ui.LayoutView(timeout=None)
+    carte = discord.ui.Container(accent_colour=discord.Colour(COLORS["danger"]))
+
+    carte.add_item(discord.ui.Section(
+        f"## 💻 HACK RÉUSSI\n### {membre.display_name}\n-# @{membre.name} · ID {membre.id}",
+        accessory=discord.ui.Thumbnail(membre.display_avatar.url),
+    ))
     if d.get("banniere"):
-        e.set_image(url=d["banniere"])
-    e.add_field(name="🪪 Identité", inline=False, value=(
-        f"Utilisateur : `{membre.name}`\nNom affiché : {membre.global_name or '—'}\n"
-        f"Pseudo ici : {membre.nick or '—'}\nID : `{membre.id}`"))
-    e.add_field(name="📅 Compte créé", value=f"{fmt(membre.created_at, 'D')}\n{fmt(membre.created_at, 'R')}")
+        carte.add_item(discord.ui.MediaGallery(discord.MediaGalleryItem(d["banniere"])))
+    carte.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
+
+    # ── le vrai ──
+    profil = ["### 🪪 Profil",
+              f"**Compte créé** · {fmt(membre.created_at, 'D')} ({fmt(membre.created_at, 'R')})"]
     if getattr(membre, "joined_at", None):
-        e.add_field(name="🚪 Arrivé ici", value=f"{fmt(membre.joined_at, 'D')}\n{fmt(membre.joined_at, 'R')}")
+        profil.append(f"**Sur le serveur** · depuis le {fmt(membre.joined_at, 'D')} ({fmt(membre.joined_at, 'R')})")
     roles = [r.mention for r in reversed(membre.roles) if not r.is_default()][:6]
-    e.add_field(name="🎭 Rôles", value=", ".join(roles) or "aucun", inline=False)
+    if roles:
+        profil.append(f"**Rôles** · {' '.join(roles)}")
     pseudos = d.get("pseudos") or []
-    e.add_field(name="🕵️ Anciens pseudos", inline=False,
-                value=", ".join(f"`{p}`" for p in pseudos) or "aucun retrouvé")
-    act = []
-    if d.get("niveau") is not None:
-        act.append(f"Niveau {d['niveau']} · {d['vocal_h']:.1f} h en vocal")
-    if d.get("messages"):
-        act.append(f"{d['messages']} messages ces 7 derniers jours"
-                   + (f", surtout dans <#{d['salon']}>" if d.get("salon") else ""))
-    if d.get("dernier"):
-        act.append(f"Dernier message : <t:{int(d['dernier'])}:R>")
-    if getattr(membre, "premium_since", None):
-        act.append(f"Booste le serveur depuis le {fmt(membre.premium_since, 'D')}")
+    if pseudos:    # du plus ancien au pseudo actuel
+        frise = " → ".join(f"`{p}`" for p in reversed(pseudos))
+        profil.append(f"**Anciens pseudos** · {frise} → **{membre.display_name}**")
+    else:
+        profil.append("**Anciens pseudos** · aucun retrouvé")
     if d.get("badges"):
-        act.append("Badges : " + ", ".join(d["badges"]))
-    e.add_field(name="📊 Activité", value="\n".join(act) or "un fantôme : aucune trace", inline=False)
+        profil.append(f"**Badges** · {', '.join(d['badges'])}")
+    carte.add_item(discord.ui.TextDisplay("\n".join(profil)))
+
+    activite = []
+    if d.get("niveau") is not None:
+        activite += [f"Niveau **{d['niveau']}**", f"**{d['vocal_h']:.1f} h** en vocal"]
+    if d.get("messages"):
+        activite.append(f"**{d['messages']}** messages cette semaine"
+                        + (f" (surtout <#{d['salon']}>)" if d.get("salon") else ""))
+    if d.get("dernier"):
+        activite.append(f"vu <t:{int(d['dernier'])}:R>")
+    if getattr(membre, "premium_since", None):
+        activite.append(f"booste depuis le {fmt(membre.premium_since, 'D')}")
+    carte.add_item(discord.ui.TextDisplay(
+        "### 📊 Activité\n" + (" · ".join(activite) or "Un fantôme : aucune trace.")))
+    carte.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
+
+    # ── l'inventé ──
     nom_niveau, pct = d["niveau_hack"]
-    e.add_field(name="☠️ Niveau de hack", inline=False, value=f"`{_barre(pct)}` **{nom_niveau}**")
-    e.add_field(name="🕳️ Failles exploitées", inline=False, value="\n".join(f"• {f}" for f in d["failles"]))
-    e.add_field(name="💀 Données volées", inline=False, value=(
-        f"Mot de passe : `{d['mdp']}`\nIP : `{d['ip']}` ({d['fai']})\nAppareil : {d['appareil']}\n"
-        f"Fichiers : {d['volees'][0]}, {d['volees'][1]}\n"
-        f"Dernières recherches : « {d['recherches'][0]} », « {d['recherches'][1]} »"))
-    e.set_footer(text="Résultat 100% fictif pour rire entre potes")
-    return e
+    carte.add_item(discord.ui.TextDisplay(f"### ☠️ Niveau de hack · {nom_niveau}\n`{_barre(pct)}`"))
+    carte.add_item(discord.ui.TextDisplay(
+        "### 🕳️ Failles exploitées\n" + "\n".join(f"> ❌ {f}" for f in d["failles"])))
+    dump = [
+        f"{GRIS}mot de passe{RAZ}  {JAUNE}{d['mdp']}{RAZ}",
+        f"{GRIS}adresse IP  {RAZ}  {VERT}{d['ip']}{RAZ} · {d['fai']}",
+        f"{GRIS}appareil    {RAZ}  {d['appareil']}",
+        f"{GRIS}fichiers    {RAZ}  {d['volees'][0]}",
+        f"{GRIS}            {RAZ}  {d['volees'][1]}",
+        f"{GRIS}recherches  {RAZ}  « {d['recherches'][0]} »",
+        f"{GRIS}            {RAZ}  « {d['recherches'][1]} »",
+    ]
+    carte.add_item(discord.ui.TextDisplay("### 💀 Données volées\n" + bloc_terminal(dump)))
+    carte.add_item(discord.ui.Separator())
+    carte.add_item(discord.ui.TextDisplay(f"-# {PIED_HACK}"))
+    vue.add_item(carte)
+    return vue
 
 
 def bloc_terminal(lignes: list) -> str:
@@ -351,7 +380,10 @@ class Farces(commands.Cog):
                 await asyncio.sleep(attente)
                 await msg.edit(content=f"{entete}\n{bloc_terminal(lignes)}")
             await asyncio.sleep(1.2)
-            await msg.edit(embed=embed_dossier(membre, d))
+            # Une carte Components V2 ne peut pas cohabiter avec du texte : elle part en
+            # message à part, sous le terminal, sans repinger la victime.
+            await interaction.channel.send(view=carte_dossier(membre, d),
+                                           allowed_mentions=discord.AllowedMentions.none())
         except discord.HTTPException:
             return
 
