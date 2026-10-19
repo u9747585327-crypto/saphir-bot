@@ -78,21 +78,40 @@ BADGES = {
 }
 APPAREILS = ["PC portable de 2014 · 47 onglets Chrome ouverts", "iPhone 8 · écran fissuré · 3 % de batterie",
              "PC gamer RGB · 0 jeu terminé", "Samsung en mode économie d'énergie permanent",
-             "PC familial partagé avec la petite sœur", "Chromebook de l'école, « emprunté »"]
-MOTS_DE_PASSE = ["iloveyou123", "motdepasse", "azerty", "jaimemamaman", "MonChatSappelleKiwi",
-                 "123soleil", "pizza4ever", "jesuisleplusbeau", "password1"]
-NIVEAUX_HACK = [("Débutant", 23), ("Intermédiaire", 57), ("Expert", 88), ("Élite ☠️", 100)]
+             "PC familial partagé avec la petite sœur", "Chromebook de l'école, « emprunté »",
+             "PC qui fait un bruit de réacteur de Boeing 747 au démarrage"]
+MOTS_DE_PASSE = ["iloveyou123", "motdepasse", "azerty123", "jaimemamaman", "MonChatSappelleKiwi",
+                 "123soleil", "pizza4ever", "jesuisleplusbeau", "password1", "medor2010"]
+NIVEAUX_HACK = [("Débutant", 23), ("Intermédiaire", 57), ("Expert", 88), ("Élite", 100)]
 FAILLES = ["Mot de passe écrit sur un post-it collé à l'écran", "Clique sur toutes les pubs « Vous avez gagné un iPhone »",
            "Même mot de passe depuis 2012", "Webcam sans cache depuis 3 ans",
            "A prêté son compte Netflix à 14 personnes", "Accepte tous les cookies sans lire",
-           "Wi-Fi « Livebox-Mamie » sans mot de passe", "Antivirus expiré en 2019"]
+           "Wi-Fi « Livebox-Mamie » sans mot de passe",
+           "A cliqué sur « Télécharger plus de RAM gratuitement »",
+           "Mot de passe : azerty123, ou le prénom de son chien",
+           "A cru qu'un prince nigérian allait vraiment lui transférer un héritage",
+           "Scotch sur la webcam, mais micro allumé depuis 4 jours"]
 DONNEES_VOLEES = ["14 Go de selfies ratés", "son historique YouTube (« tuto danse TikTok » ×47)",
                   "3 brouillons de déclaration d'amour", "sa playlist « motivation » 100 % Jul",
-                  "un dossier « Devoirs » qui n'en contient aucun", "ses notes du bac (on n'en parlera pas)"]
+                  "un dossier « Devoirs » qui n'en contient aucun", "ses notes du bac (on n'en parlera pas)",
+                  "« Nouveau dossier (42) », totalement vide", "35 vidéos de chutes ratées en trottinette",
+                  "« Projets sérieux » : 50 Go de mèmes", "mots_de_passe_ne_pas_ouvrir.txt, sur le bureau"]
 RECHERCHES = ["comment devenir drôle", "pourquoi personne me répond sur discord",
               "est-ce que les pâtes c'est un légume", "comment gagner en ranked sans jouer",
               "tuto avoir des amis", "mon chat me juge est-ce normal", "c'est grave de dormir 14h",
-              "acheter des abonnés pas cher", "comment effacer son historique"]
+              "acheter des abonnés pas cher", "comment effacer son historique",
+              "gemmes gratuites brawl stars sans virus", "pourquoi mon chat me fixe quand je dors",
+              "excuse crédible pour annuler une sortie à la dernière minute",
+              "peut-on cuire des pâtes dans une bouilloire"]
+ACTIVITES = ["A supprimé un message vocal WhatsApp beaucoup trop tard",
+             "A liké une photo de 2017 en stalkant, puis l'a retirée",
+             "A répondu « mdr » à un message triste par réflexe",
+             "A envoyé « je suis en route » depuis son lit",
+             "A relu 14 fois un message avant de l'envoyer, puis l'a supprimé"]
+DANGEROSITES = ["Inoffensif · panique quand il n'y a plus de Wi-Fi",
+                "Faible · se fait battre par les captchas",
+                "Négligeable · demande à sa mère pour changer de mot de passe",
+                "Nulle · croit que « incognito » le rend invisible"]
 VERT, ROUGE, JAUNE, BLEU, CYAN, GRIS, GRAS, RAZ = (
     "\u001b[0;32m", "\u001b[0;31m", "\u001b[0;33m", "\u001b[0;34m", "\u001b[0;36m", "\u001b[0;30m",
     "\u001b[1;37m", "\u001b[0m")
@@ -114,9 +133,10 @@ def inventer(d: dict, membre) -> dict:
     affichent les mêmes."""
     d.update(
         ip=_ip(), serveur=_ip(), fai=random.choice(FAI), appareil=random.choice(APPAREILS),
-        recherches=random.sample(RECHERCHES, 2), mdp=random.choice(MOTS_DE_PASSE),
+        recherches=random.sample(RECHERCHES, 3), mdp=random.choice(MOTS_DE_PASSE),
         niveau_hack=random.choice(NIVEAUX_HACK), failles=random.sample(FAILLES, 3),
-        volees=random.sample(DONNEES_VOLEES, 2),
+        volees=random.sample(DONNEES_VOLEES, 3), activite_recente=random.choice(ACTIVITES),
+        dangerosite=random.choice(DANGEROSITES),
     )
     return d
 
@@ -156,6 +176,7 @@ def piratage(membre, d: dict) -> list:
 
 
 PIED_HACK = "Résultat 100% fictif pour rire entre potes"
+COULEUR_PANEL = 0x8B1E1E      # rouge sombre : plus sobre que le rouge vif des alertes
 
 
 def carte_dossier(membre, d: dict) -> discord.ui.LayoutView:
@@ -163,18 +184,23 @@ def carte_dossier(membre, d: dict) -> discord.ui.LayoutView:
     profil, puis le piratage inventé présenté comme un dump de terminal."""
     fmt = discord.utils.format_dt
     vue = discord.ui.LayoutView(timeout=None)
-    carte = discord.ui.Container(accent_colour=discord.Colour(COLORS["danger"]))
+    carte = discord.ui.Container(accent_colour=discord.Colour(COULEUR_PANEL))
 
+    nom_niveau, pct = d["niveau_hack"]
     carte.add_item(discord.ui.Section(
-        f"## 💻 HACK RÉUSSI\n### {membre.display_name}\n-# @{membre.name} · ID {membre.id}",
+        f"## PANEL D'INTRUSION\n### {membre.display_name}\n"
+        f"-# Cible @{membre.name} · ID {membre.id} · session ouverte <t:{int(time.time())}:R>",
         accessory=discord.ui.Thumbnail(membre.display_avatar.url),
     ))
     if d.get("banniere"):
         carte.add_item(discord.ui.MediaGallery(discord.MediaGalleryItem(d["banniere"])))
+    carte.add_item(discord.ui.TextDisplay(
+        f"**STATUT** `ACCÈS ROOT` · **COMPROMISSION** `{_barre(pct)}` {nom_niveau}\n"
+        f"**DANGEROSITÉ** {d['dangerosite']}"))
     carte.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
 
     # ── le vrai ──
-    profil = ["### 🪪 Profil",
+    profil = ["### PROFIL",
               f"**Compte créé** · {fmt(membre.created_at, 'D')} ({fmt(membre.created_at, 'R')})"]
     if getattr(membre, "joined_at", None):
         profil.append(f"**Sur le serveur** · depuis le {fmt(membre.joined_at, 'D')} ({fmt(membre.joined_at, 'R')})")
@@ -202,24 +228,24 @@ def carte_dossier(membre, d: dict) -> discord.ui.LayoutView:
     if getattr(membre, "premium_since", None):
         activite.append(f"booste depuis le {fmt(membre.premium_since, 'D')}")
     carte.add_item(discord.ui.TextDisplay(
-        "### 📊 Activité\n" + (" · ".join(activite) or "Un fantôme : aucune trace.")))
+        "### ACTIVITÉ\n" + (" · ".join(activite) or "Un fantôme : aucune trace.")))
     carte.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
 
     # ── l'inventé ──
-    nom_niveau, pct = d["niveau_hack"]
-    carte.add_item(discord.ui.TextDisplay(f"### ☠️ Niveau de hack · {nom_niveau}\n`{_barre(pct)}`"))
+    def numeros(lignes):
+        return "\n".join(f"`{i:02d}` {l}" for i, l in enumerate(lignes, 1))
+
+    carte.add_item(discord.ui.TextDisplay("### FAILLES EXPLOITÉES\n" + numeros(d["failles"])))
+    carte.add_item(discord.ui.TextDisplay("### FICHIERS EXTRAITS\n" + numeros(d["volees"])))
     carte.add_item(discord.ui.TextDisplay(
-        "### 🕳️ Failles exploitées\n" + "\n".join(f"> ❌ {f}" for f in d["failles"])))
-    dump = [
-        f"{GRIS}mot de passe{RAZ}  {JAUNE}{d['mdp']}{RAZ}",
-        f"{GRIS}adresse IP  {RAZ}  {VERT}{d['ip']}{RAZ} · {d['fai']}",
-        f"{GRIS}appareil    {RAZ}  {d['appareil']}",
-        f"{GRIS}fichiers    {RAZ}  {d['volees'][0]}",
-        f"{GRIS}            {RAZ}  {d['volees'][1]}",
-        f"{GRIS}recherches  {RAZ}  « {d['recherches'][0]} »",
-        f"{GRIS}            {RAZ}  « {d['recherches'][1]} »",
+        "### HISTORIQUE DE RECHERCHE\n" + "\n".join(f"`>` « {r} »" for r in d["recherches"])))
+    machine = [
+        f"{GRIS}machine       {RAZ}{d['appareil']}",
+        f"{GRIS}adresse IP    {RAZ}{VERT}{d['ip']}{RAZ} ({d['fai']})",
+        f"{GRIS}mot de passe  {RAZ}{JAUNE}{d['mdp']}{RAZ}",
+        f"{GRIS}dernière act. {RAZ}{d['activite_recente']}",
     ]
-    carte.add_item(discord.ui.TextDisplay("### 💀 Données volées\n" + bloc_terminal(dump)))
+    carte.add_item(discord.ui.TextDisplay("### MACHINE CIBLÉE\n" + bloc_terminal(machine)))
     carte.add_item(discord.ui.Separator())
     carte.add_item(discord.ui.TextDisplay(f"-# {PIED_HACK}"))
     vue.add_item(carte)
