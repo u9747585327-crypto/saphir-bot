@@ -8,6 +8,10 @@ Vocal : /bruitage, /prout, /annonce-vocale, /kidnapping (staff).
 Les sons et les annonces (voix « Léo », ElevenLabs) sont générés une fois pour toutes
 et livrés dans assets/farces : rien n'est appelé en ligne.
 
+Accès : admins (Gérer le serveur) et propriétaire (Administrateur) uniquement ; les
+commandes sont masquées aux autres et revérifiées à chaque appel. /pas-touche reste
+ouvert à tous.
+
 Garde-fous, pour que ça reste une blague et pas du harcèlement :
 - /pas-touche : n'importe qui peut refuser d'être visé (bascule, mémorisée) ;
 - délais : une farce texte toutes les 10 s et une vocale toutes les 15 s par membre
@@ -271,6 +275,19 @@ class Farces(commands.Cog):
             self._dernier[("cible", cible.id)] = time.monotonic()
         return True
 
+    # ── accès : admins et propriétaire ───────────────────────────────────────
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Les farces sont réservées aux admins et au propriétaire : permission
+        Administrateur (rôle Owner) ou Gérer le serveur (rôle Admin). Le menu / les
+        masque déjà aux autres (default_permissions), mais un admin peut rouvrir l'accès
+        dans les réglages d'intégration de Discord : on revérifie donc ici.
+        /pas-touche reste ouvert à tous : c'est ce qui permet de se protéger."""
+        if getattr(interaction.command, "name", "") == "pas-touche":
+            return True
+        droits = interaction.user.guild_permissions
+        return droits.administrator or droits.manage_guild or interaction.user.id == interaction.guild.owner_id
+
     # ── anonymat ─────────────────────────────────────────────────────────────
     # Discord affiche « X used /commande » au-dessus de toute RÉPONSE à une commande.
     # On répond donc en privé au lanceur, et la farce part comme un message normal du
@@ -313,6 +330,7 @@ class Farces(commands.Cog):
     # ── texte ────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="hack", description="Pirate (pour de faux) un membre, en direct")
+    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(membre="La victime")
     async def hack(self, interaction: discord.Interaction, membre: discord.Member):
         if not await self._peut(interaction, membre):
@@ -410,6 +428,7 @@ class Farces(commands.Cog):
             await self._noter_nom(after.id, "nom affiché", before.global_name, after.global_name)
 
     @app_commands.command(name="fakeban", description="Bannit un membre… pour de faux")
+    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(membre="La victime")
     async def fakeban(self, interaction: discord.Interaction, membre: discord.Member):
         if not await self._peut(interaction, membre):
@@ -433,6 +452,7 @@ class Farces(commands.Cog):
             pass
 
     @app_commands.command(name="perroquet", description="Pendant 1 min, Saphir répète ce qu'il écrit en mOdE mOqUeUr")
+    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(membre="La victime")
     async def perroquet(self, interaction: discord.Interaction, membre: discord.Member):
         if not await self._peut(interaction, membre):
@@ -473,6 +493,7 @@ class Farces(commands.Cog):
             pass
 
     @app_commands.command(name="surnom", description="Donne un surnom ridicule à un membre pendant 10 min")
+    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(membre="La victime")
     async def surnom(self, interaction: discord.Interaction, membre: discord.Member):
         guild = interaction.guild
@@ -592,6 +613,7 @@ class Farces(commands.Cog):
                     pass
 
     @app_commands.command(name="bruitage", description="Saphir débarque dans ton vocal et joue un bruitage")
+    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(son="Le bruitage")
     @app_commands.choices(son=[app_commands.Choice(name=v, value=k) for k, v in BRUITAGES.items()])
     async def bruitage(self, interaction: discord.Interaction, son: app_commands.Choice[str]):
@@ -599,22 +621,20 @@ class Farces(commands.Cog):
         await self._jouer_en_vocal(interaction, chemin if os.path.exists(chemin) else None, son.name)
 
     @app_commands.command(name="prout", description="Le grand classique, dans ton salon vocal")
+    @app_commands.default_permissions(manage_guild=True)
     async def prout(self, interaction: discord.Interaction):
         chemin = os.path.join(FARCES_DIR, "bruitages", "pet.ogg")
         await self._jouer_en_vocal(interaction, chemin if os.path.exists(chemin) else None, "💨 Prout")
 
     @app_commands.command(name="annonce-vocale", description="Une annonce absurde de Saphir Radio dans ton vocal")
+    @app_commands.default_permissions(manage_guild=True)
     async def annonce_vocale(self, interaction: discord.Interaction):
         await self._jouer_en_vocal(interaction, fichier_au_hasard("annonces"), "📢 Annonce spéciale")
 
     @app_commands.command(name="kidnapping", description="Embarque un membre dans un autre vocal pendant 15 s")
+    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(membre="La victime")
-    @app_commands.default_permissions(move_members=True)
     async def kidnapping(self, interaction: discord.Interaction, membre: discord.Member):
-        if not interaction.user.guild_permissions.move_members:
-            await interaction.response.send_message("❌ Réservé à ceux qui peuvent déplacer des membres.",
-                                                    ephemeral=True)
-            return
         depart = membre.voice.channel if membre.voice else None
         if depart is None:
             await interaction.response.send_message(f"🔈 {membre.display_name} n'est dans aucun vocal.",
@@ -656,7 +676,8 @@ class Farces(commands.Cog):
                 pass
 
     async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        await handle_app_error(interaction, error, command_label="une farce")
+        await handle_app_error(interaction, error, command_label="une farce",
+                               perm_message="🔒 Les farces sont réservées aux admins et au propriétaire du serveur.")
 
 
 async def setup(bot):
