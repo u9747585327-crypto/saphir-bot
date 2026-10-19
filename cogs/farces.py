@@ -20,8 +20,10 @@ Garde-fous, pour que ça reste une blague et pas du harcèlement :
 """
 
 import asyncio
+import base64
 import os
 import random
+import string
 import time
 
 import discord
@@ -29,6 +31,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from cogs._shared import handle_app_error
+from cogs.logs import resolve_log_channel
 from config import COLORS, GUILD_SETTINGS_FILE
 from storage import aload_json, asave_json
 
@@ -52,19 +55,75 @@ BRUITAGES = {
     "applaudissements": "👏 Applaudissements",
 }
 
-MOTS_DE_PASSE = ["jaimelespates123", "azerty", "motdepasse", "MaMamanEstLaMeilleure", "1234 (même pas 12345)",
-                 "nutella4ever", "j3suisunh4ck3r", "soleil", "chaton2009"]
-RECHERCHES = ["comment devenir drôle", "pourquoi personne me répond sur discord",
-              "est-ce que les pâtes c'est un légume", "comment gagner en ranked sans jouer",
-              "tuto avoir des amis", "mon chat me juge est-ce normal", "comment parler aux filles tuto",
-              "c'est grave de dormir 14h", "acheter des abonnés pas cher"]
-BUTINS = ["37 photos de son chat", "un dossier « devoirs » qui ne contient pas de devoirs",
-          "4 Go de mèmes de 2016", "ses brouillons de messages jamais envoyés", "une playlist 100 % Jul",
-          "son classement en ranked (on préfère ne pas en parler)"]
-FINS_HACK = ["Hack terminé. Les données ont été envoyées à sa mère. 📨",
-             "Hack terminé. Résultat : rien d'intéressant, comme prévu.",
-             "Hack terminé. On a tout supprimé sauf ses mèmes, on n'est pas des monstres.",
-             "Hack terminé. Son PC a demandé à être débranché."]
+# ── /hack : un terminal qui ressemble au vrai ─────────────────────────────────
+# Seules l'ID Discord et la date de création du compte sont réelles (informations
+# publiques). Tout le reste est inventé. Volontairement absent : toute localisation,
+# même fausse — à côté d'un vrai pseudo, ça ressemble trop à du doxxing.
+VERT, ROUGE, JAUNE, BLEU, CYAN, GRIS, GRAS, RAZ = (
+    "\u001b[0;32m", "\u001b[0;31m", "\u001b[0;33m", "\u001b[0;34m", "\u001b[0;36m", "\u001b[0;30m",
+    "\u001b[1;37m", "\u001b[0m")
+FAI = ["Orange", "Free", "SFR", "Bouygues Telecom"]
+OCTETS_FAI = [78, 79, 80, 82, 83, 86, 88, 90, 92, 109, 176, 185, 212]
+REVELATION_HACK = 30      # s avant la petite ligne « simulation », pour que personne ne panique
+
+
+def _ip():
+    return f"{random.choice(OCTETS_FAI)}.{random.randint(1, 254)}.{random.randint(1, 254)}.{random.randint(2, 254)}"
+
+
+def _faux_jeton(user_id: int) -> str:
+    """Au format d'un vrai jeton Discord (ID en base64 . horodatage . signature),
+    mais les deux dernières parties sont tirées au hasard : il ne vaut rien."""
+    alpha = string.ascii_letters + string.digits + "-_"
+    debut = base64.b64encode(str(user_id).encode()).decode().rstrip("=")
+    return f"{debut}.{''.join(random.choices(alpha, k=6))}.{''.join(random.choices(alpha, k=27))}"
+
+
+def _barre(pourcent: int) -> str:
+    plein = pourcent * 20 // 100
+    return f"[{'█' * plein}{'░' * (20 - plein)}] {pourcent:3d}%"
+
+
+def piratage(membre) -> list:
+    """Les images successives du terminal : liste de (attente en s, lignes)."""
+    ip, serveur = _ip(), _ip()
+    longueur = random.randint(8, 13)
+    images, l = [], [f"{VERT}root@saphir{RAZ}:{BLEU}~{RAZ}# ./breach --target {membre.name}"]
+
+    def image(attente, *nouvelles):
+        l.extend(nouvelles)
+        images.append((attente, list(l)))
+
+    image(0)
+    image(1.4, f"{CYAN}[*]{RAZ} Résolution du compte Discord…",
+          f"    ID {membre.id} · créé le {membre.created_at:%d/%m/%Y}")
+    image(1.6, f"{CYAN}[*]{RAZ} Corrélation adresse IP… {VERT}{ip}{RAZ} ({random.choice(FAI)})")
+    ports = [("22/tcp", "ssh"), ("80/tcp", "http"), ("443/tcp", "https"), ("3389/tcp", "ms-wbt-server"),
+             ("5900/tcp", "vnc")]
+    lignes_ports = [f"    {GRIS}PORT      ÉTAT     SERVICE{RAZ}"]
+    for port, service in ports:
+        etat = random.choice([f"{VERT}ouvert {RAZ}", f"{ROUGE}fermé  {RAZ}", f"{JAUNE}filtré {RAZ}"])
+        lignes_ports.append(f"    {port:<9} {etat}  {service}")
+    image(1.8, f"{CYAN}[*]{RAZ} Scan des ports de {ip}", *lignes_ports)
+    l.append(f"{CYAN}[*]{RAZ} Brute-force du mot de passe {_barre(0)}")
+    for pct in (23, 58, 91):
+        l[-1] = f"{CYAN}[*]{RAZ} Brute-force du mot de passe {_barre(pct)}"
+        images.append((1.2, list(l)))
+    l[-1] = f"{CYAN}[*]{RAZ} Brute-force du mot de passe {_barre(100)}"
+    image(1.2, f"{VERT}[+]{RAZ} Mot de passe trouvé : {'•' * longueur} ({longueur} caractères)")
+    image(1.6, f"{VERT}[+]{RAZ} Jeton de session : {JAUNE}{_faux_jeton(membre.id)}{RAZ}")
+    image(1.6, f"{CYAN}[*]{RAZ} Extraction : {random.randint(800, 9000)} messages, "
+               f"{random.randint(40, 600)} images, {random.randint(3, 90)} notes vocales")
+    l.append(f"{CYAN}[*]{RAZ} Envoi vers {serveur} {_barre(0)}")
+    for pct in (41, 100):
+        l[-1] = f"{CYAN}[*]{RAZ} Envoi vers {serveur} {_barre(pct)}"
+        images.append((1.3, list(l)))
+    image(1.2, f"{GRAS}[✓] Accès total obtenu. Connexion fermée.{RAZ}")
+    return images
+
+
+def bloc_terminal(lignes: list) -> str:
+    return "```ansi\n" + "\n".join(lignes) + "\n```"
 RAISONS_BAN = ["trop nul en ranked", "a dit « quoi » et on a répondu « feur »",
                "odeur suspecte détectée à travers le micro", "a liké son propre message",
                "abus de « mdr » sans jamais rire", "a mis de l'ananas sur la pizza",
@@ -143,6 +202,32 @@ class Farces(commands.Cog):
             self._dernier[("cible", cible.id)] = time.monotonic()
         return True
 
+    # ── anonymat ─────────────────────────────────────────────────────────────
+    # Discord affiche « X used /commande » au-dessus de toute RÉPONSE à une commande.
+    # On répond donc en privé au lanceur, et la farce part comme un message normal du
+    # bot, qui ne porte aucun nom.
+
+    async def _discret(self, interaction: discord.Interaction):
+        await interaction.response.send_message("🤫 C'est parti. Personne ne verra que c'est toi.", ephemeral=True)
+
+    async def _tracer(self, interaction: discord.Interaction, commande: str, cible=None, lieu=None):
+        """Anonyme pour les membres, mais pas pour le staff : chaque farce est notée
+        dans le salon de logs modération, au cas où quelqu'un en abuse."""
+        try:
+            salon = await resolve_log_channel(self.bot, interaction.guild, "moderation")
+            if salon is None:
+                return
+            lignes = [f"**Par** : {interaction.user.mention}", f"**Commande** : `/{commande}`"]
+            if cible is not None:
+                lignes.append(f"**Cible** : {cible.mention}")
+            lignes.append(f"**Salon** : {(lieu or interaction.channel).mention}")
+            embed = discord.Embed(title="🎭 Farce anonyme", description="\n".join(lignes),
+                                  color=discord.Color(COLORS["grey"]))
+            embed.timestamp = discord.utils.utcnow()
+            await salon.send(embed=embed)
+        except Exception as e:
+            print(f"[farces] trace non envoyée : {e}")
+
     @app_commands.command(name="pas-touche", description="Refuser (ou accepter à nouveau) d'être la cible des farces")
     async def pas_touche(self, interaction: discord.Interaction):
         settings = await aload_json(GUILD_SETTINGS_FILE, {})
@@ -163,23 +248,20 @@ class Farces(commands.Cog):
     async def hack(self, interaction: discord.Interaction, membre: discord.Member):
         if not await self._peut(interaction, membre):
             return
-        lignes = [f"💻 **Piratage de {membre.mention} en cours…**"]
-        await interaction.response.send_message("\n".join(lignes))
-        etapes = [
-            f"🌐 Adresse IP trouvée : `127.0.0.{random.randint(2, 254)}` (oui, c'est chez lui)",
-            f"🔑 Mot de passe : `{random.choice(MOTS_DE_PASSE)}`",
-            f"🔍 Dernière recherche Google : *« {random.choice(RECHERCHES)} »*",
-            f"📂 Fichiers récupérés : {random.choice(BUTINS)}",
-            "📤 Envoi de tout ça à sa famille… ✅",
-            f"**{random.choice(FINS_HACK)}**",
-        ]
-        for etape in etapes:
-            await asyncio.sleep(1.7)
-            lignes.append(etape)
-            try:
-                await interaction.edit_original_response(content="\n".join(lignes))
-            except discord.HTTPException:
-                return
+        await self._discret(interaction)
+        await self._tracer(interaction, "hack", membre)
+        images = piratage(membre)
+        entete = f"💻 {membre.mention}"
+        try:
+            msg = await interaction.channel.send(f"{entete}\n{bloc_terminal(images[0][1])}")
+            for attente, lignes in images[1:]:
+                await asyncio.sleep(attente)
+                await msg.edit(content=f"{entete}\n{bloc_terminal(lignes)}")
+            await asyncio.sleep(REVELATION_HACK)
+            await msg.edit(content=f"{entete}\n{bloc_terminal(images[-1][1])}\n"
+                                   "-# Simulation de Saphir : aucune donnée réelle n'a été consultée.")
+        except discord.HTTPException:
+            return
 
     @app_commands.command(name="fakeban", description="Bannit un membre… pour de faux")
     @app_commands.describe(membre="La victime")
@@ -191,14 +273,16 @@ class Farces(commands.Cog):
             description=f"{membre.mention} a été **banni** du serveur.\n**Raison** : {random.choice(RAISONS_BAN)}",
             color=discord.Color(COLORS["danger"]),
         )
-        embed.set_footer(text=f"Par {interaction.user.display_name}")
-        await interaction.response.send_message(content=membre.mention, embed=embed)
-        await asyncio.sleep(6)
-        embed.title = "🔨 Bannissement… ou pas"
-        embed.description += "\n\n😭 **C'était une blague.** Pour cette fois."
-        embed.color = discord.Color(COLORS["success"])
+        embed.set_footer(text="Modération Saphir")
+        await self._discret(interaction)
+        await self._tracer(interaction, "fakeban", membre)
         try:
-            await interaction.edit_original_response(embed=embed)
+            msg = await interaction.channel.send(content=membre.mention, embed=embed)
+            await asyncio.sleep(6)
+            embed.title = "🔨 Bannissement… ou pas"
+            embed.description += "\n\n😭 **C'était une blague.** Pour cette fois."
+            embed.color = discord.Color(COLORS["success"])
+            await msg.edit(embed=embed)
         except discord.HTTPException:
             pass
 
@@ -212,10 +296,15 @@ class Farces(commands.Cog):
             "fin": time.monotonic() + DUREE_PERROQUET,
             "restant": REPETITIONS_PERROQUET,
         }
-        await interaction.response.send_message(
-            f"🦜 Le perroquet s'est posé sur l'épaule de {membre.mention}. Pendant une minute, "
-            "tout ce qu'il écrit ici sera répété… à notre façon."
-        )
+        await self._discret(interaction)
+        await self._tracer(interaction, "perroquet", membre)
+        try:
+            await interaction.channel.send(
+                f"🦜 Le perroquet s'est posé sur l'épaule de {membre.mention}. Pendant une minute, "
+                "tout ce qu'il écrit ici sera répété… à notre façon."
+            )
+        except discord.HTTPException:
+            pass
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -267,8 +356,13 @@ class Farces(commands.Cog):
             await asave_json(GUILD_SETTINGS_FILE, settings)
             await interaction.response.send_message("❌ Impossible de le renommer.", ephemeral=True)
             return
-        await interaction.response.send_message(
-            f"🏷️ {membre.mention} s'appelle désormais **{nouveau}**. Retour à la normale dans 10 minutes.")
+        await self._discret(interaction)
+        await self._tracer(interaction, "surnom", membre)
+        try:
+            await interaction.channel.send(
+                f"🏷️ {membre.mention} s'appelle désormais **{nouveau}**. Retour à la normale dans 10 minutes.")
+        except discord.HTTPException:
+            pass
 
     @tasks.loop(seconds=30)
     async def restaurer_surnoms(self):
@@ -323,7 +417,13 @@ class Farces(commands.Cog):
         if not await self._peut(interaction, vocal=True):
             return
         # réponse AVANT de se connecter : Discord coupe l'interaction au bout de 3 s
-        await interaction.response.send_message(f"{libelle} dans {voix.channel.mention}…")
+        await self._discret(interaction)
+        commande = getattr(getattr(interaction, "command", None), "name", None) or "bruitage"
+        await self._tracer(interaction, commande, lieu=voix.channel)
+        try:
+            await interaction.channel.send(f"{libelle} dans {voix.channel.mention}…")
+        except discord.HTTPException:
+            pass
         try:
             if client is None or not client.is_connected():
                 client = await voix.channel.connect(self_deaf=True)
@@ -389,16 +489,23 @@ class Farces(commands.Cog):
         except discord.HTTPException:
             await interaction.response.send_message("❌ Impossible de le déplacer.", ephemeral=True)
             return
-        await interaction.response.send_message(
-            f"🚐 {membre.mention} a été **kidnappé** et emmené dans {planque.mention} ! "
-            f"Libération dans {DUREE_KIDNAPPING} secondes… normalement.")
+        await self._discret(interaction)
+        await self._tracer(interaction, "kidnapping", membre, lieu=depart)
+        msg = None
+        try:
+            msg = await interaction.channel.send(
+                f"🚐 {membre.mention} a été **kidnappé** et emmené dans {planque.mention} ! "
+                f"Libération dans {DUREE_KIDNAPPING} secondes… normalement.")
+        except discord.HTTPException:
+            pass
         await asyncio.sleep(DUREE_KIDNAPPING)
         # on ne le ramène que s'il est toujours là où on l'a laissé
         if membre.voice is not None and membre.voice.channel == planque and guild.get_channel(depart.id):
             try:
                 await membre.move_to(depart, reason="Fin du /kidnapping")
-                await interaction.edit_original_response(
-                    content=f"🕊️ {membre.mention} a été libéré et ramené dans {depart.mention}. Plus de peur que de mal.")
+                if msg is not None:
+                    await msg.edit(content=f"🕊️ {membre.mention} a été libéré et ramené dans {depart.mention}. "
+                                           "Plus de peur que de mal.")
             except discord.HTTPException:
                 pass
 
