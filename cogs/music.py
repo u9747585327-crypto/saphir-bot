@@ -66,6 +66,9 @@ MAX_QUEUE = 500
 QUEUE_PAGE = 10
 REPRISES_MAX = 2            # flux coupé avant la fin : reprises avant d'abandonner le morceau
 DELAI_YTDLP = 60            # s : au-delà, YouTube ne répond pas, on abandonne
+DELAI_BARRE = 15            # s entre deux mises à jour de la barre de progression
+PAS_SAUT = 10               # s : boutons ⏪ / ⏩
+REPERES = 20                # positions proposées dans le menu « Aller à… » (25 au plus)
 
 # Annonces « Saphir Radio » à l'arrivée dans le vocal et au départ. Voix « Léo »
 # (ElevenLabs, modèle Multilingual v2) générée une fois pour toutes et livrée avec le
@@ -90,6 +93,26 @@ def horodatage(seconds) -> str:
     heures, reste = divmod(seconds, 3600)
     minutes, secondes = divmod(reste, 60)
     return f"{heures}:{minutes:02d}:{secondes:02d}" if heures else f"{minutes}:{secondes:02d}"
+
+
+def barre_progression(position, duree, largeur=16) -> str:
+    """`1:23 ━━━━●──────── 5:45` ; un direct n'a pas de barre."""
+    if not duree:
+        return "🔴 en direct"
+    ratio = min(1.0, max(0.0, (position or 0) / duree))
+    plein = round(ratio * largeur)
+    return f"`{horodatage(position)}` {'━' * plein}●{'─' * (largeur - plein)} `{horodatage(duree)}`"
+
+
+def lire_temps(texte):
+    """« 1:30 » -> 90, « 1:02:03 » -> 3723, « 75 » -> 75 ; None si illisible."""
+    morceaux = (texte or "").strip().lower().rstrip("s").replace("h", ":").replace("m", ":").split(":")
+    if not 1 <= len(morceaux) <= 3 or not all(m.strip().isdigit() for m in morceaux):
+        return None
+    total = 0
+    for m in morceaux:
+        total = total * 60 + int(m)
+    return total
 
 
 def format_duration(seconds) -> str:
@@ -291,8 +314,11 @@ class Player:
         self._debut_segment = None      # monotonic() du dernier démarrage, None si à l'arrêt
         self._en_pause = False
         self._passer = False            # /skip : fin voulue, à ne pas prendre pour une coupure
-        self._relance = False           # /volume : relancer le flux au même endroit
+        self._relance = False           # /volume, /seek : relancer le flux
+        self._cible = None              # /seek : position voulue à la relance (None = même endroit)
         self._flux = None               # (url, en-têtes) du morceau en cours
+        self.vue = None                 # boutons du message « Lecture en cours »
+        self.message_lecture = None
 
         self._added = asyncio.Event()   # réveille la boucle quand on ajoute un morceau
         self._finished = asyncio.Event()  # posé par ffmpeg quand le morceau se termine
@@ -372,9 +398,15 @@ class Player:
                 if self._stopped:
                     return
                 self._passer = False    # un /skip pendant l'annonce ne visait qu'elle
-                await self.annonce(embed=self.embed_lecture(track))
-                await self._jouer(track, url, entetes)
-                self._flux = None
+                self.vue = ControlesLecture(self, track)
+                self.message_lecture = await self.annonce(embed=self.embed_lecture(track), view=self.vue)
+                barre = self.bot.loop.create_task(self._boucle_barre(track))
+                try:
+                    await self._jouer(track, url, entetes)
+                finally:
+                    barre.cancel()
+                    self._flux = None
+                    await self._clore_message(track)
 
                 if self._stopped:
                     return
@@ -442,7 +474,8 @@ class Player:
                 return
             if self._relance:
                 self._relance = False
-                debut = pos
+                debut = pos if self._cible is None else self._cible
+                self._cible = None
                 continue
             if track.duration is None or pos >= track.duration - 5:
                 return                  # fin normale (ou direct, sans durée connue)
@@ -488,30 +521,86 @@ class Player:
         self.voice.stop()
         return True
 
+    def aller_a(self, cible: float):
+        """Saute à `cible` secondes dans le morceau en cours (relance ffmpeg avec -ss).
+        Renvoie la position retenue, ou None si ce n'est pas possible maintenant."""
+        track = self.current
+        if track is None or not track.duration or self._flux is None or self.voice is None:
+            return None
+        # pendant une reprise de flux, aucune lecture à interrompre : la relance
+        # resterait en attente et ferait sauter le morceau suivant
+        if not (self.voice.is_playing() or self.voice.is_paused() or self._relance):
+            return None
+        cible = max(0.0, min(float(cible), track.duration - 3))
+        self._cible = cible
+        self._offset = cible
+        self._debut_segment = None if self._en_pause else time.monotonic()
+        self._relance = True
+        self.voice.stop()
+        return cible
+
     # ── affichage ────────────────────────────────────────────────────────────
 
-    def embed_lecture(self, track):
-        embed = discord.Embed(
-            title="🎵 Lecture en cours",
-            description=f"**[{track.title}]({track.url})**",
-            color=discord.Color(COLORS["saphir"]),
-        )
+    def embed_lecture(self, track, fini=False):
+        if fini:
+            titre, couleur = "✔️ Joué", discord.Color.dark_grey()
+        elif self._en_pause:
+            titre, couleur = "⏸️ En pause", discord.Color.orange()
+        else:
+            titre, couleur = "🎵 Lecture en cours", discord.Color(COLORS["saphir"])
+        embed = discord.Embed(title=titre, description=f"**[{track.title}]({track.url})**", color=couleur)
+        if not fini:
+            embed.add_field(name="Avancement", value=barre_progression(self.position(), track.duration), inline=False)
         embed.add_field(name="Durée", value=format_duration(track.duration))
         if track.requester_id:
             embed.add_field(name="Demandé par", value=f"<@{track.requester_id}>")
-        if self.queue:
+        if self.queue and not fini:
             embed.add_field(name="Dans la file", value=f"{len(self.queue)} morceau(x)")
         if track.thumbnail:
             embed.set_thumbnail(url=track.thumbnail)
         return embed
 
-    async def annonce(self, contenu=None, embed=None):
-        if self.text_channel is None:
+    async def maj_message(self):
+        """Remet à jour la barre et les boutons du message « Lecture en cours »."""
+        msg, track, vue = self.message_lecture, self.current, self.vue
+        if msg is None or track is None or vue is None or vue.track is not track:
             return
+        vue.synchroniser()
         try:
-            await self.text_channel.send(content=contenu, embed=embed)
+            await msg.edit(embed=self.embed_lecture(track), view=vue)
         except discord.HTTPException:
             pass
+
+    async def _boucle_barre(self, track):
+        """Fait avancer la barre toutes les DELAI_BARRE s (rien à faire en pause)."""
+        try:
+            while self.current is track:
+                await asyncio.sleep(DELAI_BARRE)
+                if self.current is track and not self._en_pause:
+                    await self.maj_message()
+        except asyncio.CancelledError:
+            pass
+
+    async def _clore_message(self, track):
+        """Morceau fini : le message garde le titre, perd la barre et les boutons."""
+        vue, msg = self.vue, self.message_lecture
+        self.vue = self.message_lecture = None
+        if vue is not None:
+            vue.stop()
+        if msg is not None:
+            try:
+                await msg.edit(embed=self.embed_lecture(track, fini=True), view=None)
+            except (discord.HTTPException, asyncio.CancelledError):
+                pass
+
+    async def annonce(self, contenu=None, embed=None, view=None):
+        if self.text_channel is None:
+            return None
+        try:
+            kwargs = {"view": view} if view is not None else {}
+            return await self.text_channel.send(content=contenu, embed=embed, **kwargs)
+        except discord.HTTPException:
+            return None
 
     # ── arrêt ────────────────────────────────────────────────────────────────
 
@@ -541,6 +630,102 @@ class Player:
         # la ferait finir en « annulée » au lieu de proprement
         if self.task and not self.task.done() and self.task is not asyncio.current_task():
             self.task.cancel()
+
+
+class ChoixTemps(discord.ui.Modal, title="Aller à un moment précis"):
+    temps = discord.ui.TextInput(label="Temps (ex : 1:30)", placeholder="1:30", max_length=10)
+
+    def __init__(self, vue):
+        super().__init__()
+        self.vue = vue
+
+    async def on_submit(self, interaction: discord.Interaction):
+        secondes = lire_temps(self.temps.value)
+        if secondes is None:
+            await interaction.response.send_message("❌ Format attendu : `1:30` ou `90`.", ephemeral=True)
+            return
+        await self.vue.sauter(interaction, secondes)
+
+
+class ControlesLecture(discord.ui.View):
+    """Boutons sous « Lecture en cours » : reculer, pause, avancer, passer, temps précis,
+    et un menu qui sert de barre pour sauter à un moment du morceau. Réservés à ceux qui
+    sont dans le vocal avec le bot."""
+
+    def __init__(self, player, track):
+        super().__init__(timeout=None)
+        self.player, self.track = player, track
+        if track.duration:
+            options = []
+            for i in range(REPERES):
+                t = int(track.duration * i / REPERES)
+                rempli = round(10 * i / REPERES)
+                options.append(discord.SelectOption(
+                    label=horodatage(t), value=str(t),
+                    description=f"{'▰' * rempli}{'▱' * (10 - rempli)} {100 * i // REPERES} %"))
+            menu = discord.ui.Select(placeholder="🎚️ Aller à un moment du morceau…", options=options, row=1)
+            menu.callback = self._menu
+            self.add_item(menu)
+        else:                           # direct : rien à parcourir
+            for b in (self.reculer, self.avancer, self.temps_precis):
+                b.disabled = True
+        self.synchroniser()
+
+    def synchroniser(self):
+        en_pause = self.player._en_pause
+        self.pause_reprise.emoji = "▶️" if en_pause else "⏸️"
+        self.pause_reprise.style = discord.ButtonStyle.success if en_pause else discord.ButtonStyle.secondary
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        p = self.player
+        if p.current is not self.track or p.voice is None:
+            await interaction.response.send_message("❌ Ce morceau est terminé.", ephemeral=True)
+            return False
+        voix = getattr(interaction.user, "voice", None)
+        if voix is None or voix.channel != p.voice.channel:
+            await interaction.response.send_message("❌ Rejoins le vocal pour contrôler la musique.", ephemeral=True)
+            return False
+        return True
+
+    async def _rafraichir(self, interaction):
+        self.synchroniser()
+        await interaction.response.edit_message(embed=self.player.embed_lecture(self.track), view=self)
+
+    async def sauter(self, interaction, secondes):
+        if self.player.aller_a(secondes) is None:
+            await interaction.response.send_message("❌ Impossible de se déplacer pour l'instant, réessaie.",
+                                                    ephemeral=True)
+            return
+        await self._rafraichir(interaction)
+
+    async def _menu(self, interaction: discord.Interaction):
+        await self.sauter(interaction, int(interaction.data["values"][0]))
+
+    @discord.ui.button(emoji="⏪", style=discord.ButtonStyle.secondary, row=0)
+    async def reculer(self, interaction: discord.Interaction, _b):
+        await self.sauter(interaction, self.player.position() - PAS_SAUT)
+
+    @discord.ui.button(emoji="⏸️", style=discord.ButtonStyle.secondary, row=0)
+    async def pause_reprise(self, interaction: discord.Interaction, _b):
+        p = self.player
+        if p.voice.is_paused():
+            p.reprendre()
+        elif p.voice.is_playing():
+            p.pause()
+        await self._rafraichir(interaction)
+
+    @discord.ui.button(emoji="⏩", style=discord.ButtonStyle.secondary, row=0)
+    async def avancer(self, interaction: discord.Interaction, _b):
+        await self.sauter(interaction, self.player.position() + PAS_SAUT)
+
+    @discord.ui.button(emoji="⏭️", style=discord.ButtonStyle.primary, row=0)
+    async def passer(self, interaction: discord.Interaction, _b):
+        self.player.passer()
+        await interaction.response.send_message(f"⏭️ **{self.track.title}** passé par {interaction.user.mention}.")
+
+    @discord.ui.button(emoji="🕐", label="Temps précis", style=discord.ButtonStyle.secondary, row=0)
+    async def temps_precis(self, interaction: discord.Interaction, _b):
+        await interaction.response.send_modal(ChoixTemps(self))
 
 
 class Music(commands.Cog):
@@ -693,6 +878,7 @@ class Music(commands.Cog):
             return
         player.pause()
         await interaction.response.send_message("⏸️ En pause. `/resume` pour reprendre.")
+        await player.maj_message()
 
     @app_commands.command(name="resume", description="Reprend la lecture")
     async def resume(self, interaction: discord.Interaction):
@@ -704,6 +890,27 @@ class Music(commands.Cog):
             return
         player.reprendre()
         await interaction.response.send_message("▶️ C'est reparti.")
+        await player.maj_message()
+
+    @app_commands.command(name="seek", description="Va à un moment précis du morceau en cours")
+    @app_commands.describe(temps="Par exemple 1:30, ou 90 pour 90 secondes")
+    async def seek(self, interaction: discord.Interaction, temps: str):
+        player = await self.exige_player(interaction)
+        if player is None:
+            return
+        secondes = lire_temps(temps)
+        if secondes is None:
+            await interaction.response.send_message("❌ Format attendu : `1:30` ou `90`.", ephemeral=True)
+            return
+        if player.current is not None and not player.current.duration:
+            await interaction.response.send_message("❌ Impossible de se déplacer dans un direct.", ephemeral=True)
+            return
+        pos = player.aller_a(secondes)
+        if pos is None:
+            await interaction.response.send_message("❌ Rien à parcourir pour l'instant.", ephemeral=True)
+            return
+        await interaction.response.send_message(f"⏩ Direction **{horodatage(pos)}**.")
+        await player.maj_message()
 
     @app_commands.command(name="queue", description="Affiche la file d'attente")
     async def queue(self, interaction: discord.Interaction):
@@ -743,13 +950,7 @@ class Music(commands.Cog):
         if player is None or player.current is None:
             await interaction.response.send_message("❌ Je ne joue rien pour le moment.", ephemeral=True)
             return
-        embed = player.embed_lecture(player.current)
-        embed.add_field(
-            name="Avancement",
-            value=f"`{horodatage(player.position())} / {format_duration(player.current.duration)}`",
-            inline=False,
-        )
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=player.embed_lecture(player.current))
 
     @app_commands.command(name="loop", description="Répète le morceau en cours, toute la file, ou rien")
     @app_commands.describe(mode="Ce qu'il faut répéter")
