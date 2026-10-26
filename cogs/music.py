@@ -66,7 +66,7 @@ MAX_QUEUE = 500
 QUEUE_PAGE = 10
 REPRISES_MAX = 2            # flux coupé avant la fin : reprises avant d'abandonner le morceau
 DELAI_YTDLP = 60            # s : au-delà, YouTube ne répond pas, on abandonne
-DELAI_BARRE = 15            # s entre deux mises à jour de la barre de progression
+DELAI_BARRE = 1             # s entre deux images du lecteur animé
 PAS_SAUT = 10               # s : boutons ⏪ / ⏩
 REPERES = 20                # positions proposées dans le menu « Aller à… » (25 au plus)
 
@@ -102,6 +102,44 @@ def barre_progression(position, duree, largeur=16) -> str:
     ratio = min(1.0, max(0.0, (position or 0) / duree))
     plein = round(ratio * largeur)
     return f"`{horodatage(position)}` {'━' * plein}●{'─' * (largeur - plein)} `{horodatage(duree)}`"
+
+
+_BLEU, _CYAN, _GRIS, _BLANC, _JAUNE, _RAZ = "\x1b[34m", "\x1b[36m", "\x1b[30m", "\x1b[37m", "\x1b[33m", "\x1b[0m"
+_HAUTEURS = "▁▂▃▄▅▆▇█"
+
+
+def egaliseur(seconde: int, en_pause: bool, largeur=26) -> str:
+    """Barres d'égaliseur : une image différente à chaque seconde, à plat en pause.
+    Tirage dérivé de la seconde : la même seconde redonne la même image."""
+    if en_pause:
+        return _GRIS + "▁" * largeur + _RAZ
+    alea = random.Random(seconde)
+    barres = []
+    for i in range(largeur):
+        # enveloppe en cloche + bruit : ça ressemble à un vrai spectre, pas à du hasard pur
+        cloche = 1 - abs(i - largeur / 2) / (largeur / 2)
+        h = min(7, max(0, int(cloche * 5 + alea.random() * 4 - 1)))
+        barres.append(_HAUTEURS[h])
+    return _CYAN + "".join(barres) + _RAZ
+
+
+def ecran_lecteur(position, duree, en_pause) -> str:
+    """Bloc ANSI du lecteur : égaliseur, barre colorée, chrono à la seconde."""
+    seconde = int(position or 0)
+    lignes = [egaliseur(seconde, en_pause)]
+    if duree:
+        largeur = 26
+        ratio = min(1.0, max(0.0, seconde / duree))
+        plein = min(largeur - 1, int(ratio * largeur))
+        barre = f"{_BLEU}{'━' * plein}{_BLANC}⬤{_GRIS}{'─' * (largeur - 1 - plein)}{_RAZ}"
+        lignes.append(barre)
+        reste = horodatage(max(0, duree - seconde))
+        icone = "⏸" if en_pause else "▶"
+        lignes.append(f"{_JAUNE}{icone} {horodatage(seconde)}{_RAZ} / {horodatage(duree)}"
+                      f"{' ' * 4}{_GRIS}-{reste}{_RAZ}")
+    else:
+        lignes.append(f"{_JAUNE}● EN DIRECT{_RAZ}  {horodatage(seconde)}")
+    return "```ansi\n" + "\n".join(lignes) + "\n```"
 
 
 def lire_temps(texte):
@@ -542,23 +580,46 @@ class Player:
     # ── affichage ────────────────────────────────────────────────────────────
 
     def embed_lecture(self, track, fini=False):
+        """Le lecteur : égaliseur animé, barre et chrono à la seconde (bloc ANSI coloré)."""
         if fini:
-            titre, couleur = "✔️ Joué", discord.Color.dark_grey()
+            etat, couleur = "✔️ Joué", discord.Color.dark_grey()
         elif self._en_pause:
-            titre, couleur = "⏸️ En pause", discord.Color.orange()
+            etat, couleur = "⏸️ En pause", discord.Color.orange()
         else:
-            titre, couleur = "🎵 Lecture en cours", discord.Color(COLORS["saphir"])
-        embed = discord.Embed(title=titre, description=f"**[{track.title}]({track.url})**", color=couleur)
-        if not fini:
-            embed.add_field(name="Avancement", value=barre_progression(self.position(), track.duration), inline=False)
-        embed.add_field(name="Durée", value=format_duration(track.duration))
+            etat, couleur = "🔊 En lecture", discord.Color(COLORS["saphir"])
+        embed = discord.Embed(title=track.title[:250], url=track.url, color=couleur)
+        avatar = self.bot.user.display_avatar.url if getattr(self.bot, "user", None) else None
+        embed.set_author(name=f"Saphir Radio  ·  {etat}", icon_url=avatar)
+        if fini:
+            if track.thumbnail:
+                embed.set_thumbnail(url=track.thumbnail)
+            if track.requester_id:
+                embed.description = f"Demandé par <@{track.requester_id}> · {format_duration(track.duration)}"
+            return embed
+
+        embed.description = ecran_lecteur(self.position(), track.duration, self._en_pause)
         if track.requester_id:
             embed.add_field(name="Demandé par", value=f"<@{track.requester_id}>")
-        if self.queue and not fini:
-            embed.add_field(name="Dans la file", value=f"{len(self.queue)} morceau(x)")
+        embed.add_field(name="Volume", value=f"{round(self.volume * 100)} %")
+        boucle = {"off": "désactivée", "track": "🔂 ce morceau", "queue": "🔁 toute la file"}[self.loop_mode]
+        embed.add_field(name="Boucle", value=boucle)
+        if self.queue:
+            suivant = self.queue[0]
+            reste = f" (+{len(self.queue) - 1} autres)" if len(self.queue) > 1 else ""
+            embed.add_field(name="Ensuite", value=f"{suivant.title[:80]}{reste}", inline=False)
         if track.thumbnail:
-            embed.set_thumbnail(url=track.thumbnail)
+            embed.set_image(url=track.thumbnail)
         return embed
+
+    async def tic(self):
+        """Une image de l'animation : seulement l'embed, les boutons ne bougent pas."""
+        msg, track = self.message_lecture, self.current
+        if msg is None or track is None:
+            return
+        try:
+            await msg.edit(embed=self.embed_lecture(track))
+        except discord.HTTPException:
+            pass
 
     async def maj_message(self):
         """Remet à jour la barre et les boutons du message « Lecture en cours »."""
@@ -572,12 +633,20 @@ class Player:
             pass
 
     async def _boucle_barre(self, track):
-        """Fait avancer la barre toutes les DELAI_BARRE s (rien à faire en pause)."""
+        """Anime le lecteur à chaque seconde du morceau (rien à faire en pause).
+
+        On se cale sur la seconde suivante de la *position* : le chrono affiché tombe
+        juste au lieu de dériver. Chaque modification attend la précédente ; si Discord
+        ralentit le bot (limite de débit), les images sont simplement sautées, jamais
+        empilées."""
         try:
             while self.current is track:
-                await asyncio.sleep(DELAI_BARRE)
+                if self._en_pause:
+                    await asyncio.sleep(DELAI_BARRE)
+                    continue
+                await asyncio.sleep(DELAI_BARRE - (self.position() % DELAI_BARRE) + 0.05)
                 if self.current is track and not self._en_pause:
-                    await self.maj_message()
+                    await self.tic()
         except asyncio.CancelledError:
             pass
 
