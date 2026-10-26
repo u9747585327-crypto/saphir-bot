@@ -36,6 +36,7 @@ deploy/install-ionos.sh.
 """
 
 import asyncio
+import collections
 import json
 import os
 import random
@@ -188,9 +189,10 @@ class Track:
     """Un morceau en file d'attente. `url` est la page YouTube, pas le flux audio :
     le flux n'est résolu qu'au moment de jouer."""
 
-    __slots__ = ("url", "title", "duration", "requester_id", "thumbnail")
+    __slots__ = ("url", "title", "duration", "requester_id", "thumbnail", "auto")
 
-    def __init__(self, url, title, duration=None, requester_id=None, thumbnail=None):
+    def __init__(self, url, title, duration=None, requester_id=None, thumbnail=None, auto=False):
+        self.auto = auto                # ajouté par l'autoplay, pas demandé par quelqu'un
         self.url = url
         self.title = title
         self.duration = duration
@@ -266,6 +268,18 @@ def url_de_entree(entry) -> str:
     if url and not url.startswith("http"):
         url = f"https://www.youtube.com/watch?v={url}"
     return url
+
+
+def id_video(url) -> str:
+    """Identifiant YouTube d'une adresse (watch?v=…, youtu.be/…, shorts/…), ou ""."""
+    if not isinstance(url, str):
+        return ""
+    u = urlparse(url)
+    if "v" in parse_qs(u.query):
+        return parse_qs(u.query)["v"][0]
+    if u.netloc.endswith("youtu.be") or "/shorts/" in u.path:
+        return u.path.rstrip("/").rsplit("/", 1)[-1]
+    return ""
 
 
 def lien_de_playlist(query) -> bool:
@@ -365,6 +379,10 @@ class Player:
         self.current = None
         self.volume = cog.volumes.get(guild.id, GAIN_NORMAL)   # gain ffmpeg, pas des %
         self.loop_mode = "off"          # off | track | queue
+        self.autoplay = True            # file vide : enchaîner sur un morceau du même style
+        self.dernier = None             # dernier morceau lancé : la graine de l'autoplay
+        self.deja_joues = collections.deque(maxlen=100)   # ids vidéo, pour ne pas tourner en rond
+        self._echecs_auto = 0
 
         # position dans le morceau, pauses et reprises comprises
         self._offset = 0.0
@@ -407,6 +425,9 @@ class Player:
     # ── file d'attente ───────────────────────────────────────────────────────
 
     def add(self, tracks, en_tete=False):
+        # une vraie demande passe avant la suggestion automatique prévue
+        self.queue[:] = [t for t in self.queue if not t.auto]
+        self._echecs_auto = 0
         libre = MAX_QUEUE - len(self.queue)
         ajoutes = tracks[:max(0, libre)]
         if en_tete:
@@ -425,6 +446,10 @@ class Player:
     async def runner(self):
         try:
             while not self._stopped:
+                if not self.queue and self.autoplay and self.dernier and self._echecs_auto < 3:
+                    suggestion = await self._suggestion()
+                    if suggestion is not None and not self._stopped and not self.queue:
+                        self.queue.append(suggestion)
                 if not self.queue:
                     self._added.clear()
                     try:
@@ -437,6 +462,13 @@ class Player:
 
                 track = self.queue.pop(0)
                 self.current = track
+                self.dernier = track
+                vid = id_video(track.url)
+                if vid:
+                    self.deja_joues.append(vid)
+                # un morceau qui échoue en autoplay compte ; trois d'affilée et on arrête
+                # d'enchaîner (sinon : boucle de messages d'erreur jusqu'à ce qu'on parte)
+                self._echecs_auto = self._echecs_auto + 1 if track.auto else 0
                 self._passer = self._relance = self._en_pause = False
 
                 if self.voice is None or not self.voice.is_connected():
@@ -477,6 +509,31 @@ class Player:
         except Exception as e:
             print(f"⚠️ Erreur dans le lecteur musique de {self.guild.name} : {e}")
             await self.cleanup()
+
+    async def _suggestion(self):
+        """Un morceau du même style que le dernier, via le « Mix » que YouTube génère
+        pour chaque vidéo. On pioche au hasard parmi les premiers proposés (les plus
+        proches), en écartant ce qui vient de passer et les vidéos trop longues
+        (compilations, live de 3 h)."""
+        graine = id_video(self.dernier.url) if self.dernier else None
+        if not graine:
+            return None
+        try:
+            proposes = await search(f"https://www.youtube.com/watch?v={graine}&list=RD{graine}", None,
+                                    toute_la_playlist=True)
+        except Exception as e:
+            print(f"[musique] autoplay : pas de suggestion ({e})")
+            self._echecs_auto += 1
+            return None
+        candidats = [t for t in proposes[:15]
+                     if id_video(t.url) not in self.deja_joues and id_video(t.url) != graine
+                     and t.duration and 60 <= t.duration <= 600]
+        if not candidats:
+            self._echecs_auto += 1
+            return None
+        choix = random.choice(candidats[:6])
+        choix.auto = True
+        return choix
 
     def _apres_lecture(self, error):
         """Appelé par discord.py depuis un autre thread : on repasse proprement sur
@@ -623,7 +680,9 @@ class Player:
         if self.loop_mode != "off":
             etat_ligne.append(f"{BOUCLES[self.loop_mode][0]} Boucle : **{LIBELLES_BOUCLE[self.loop_mode]}**")
         etat_ligne.append(f"📜 **{len(self.queue)}** en file")
-        if track.requester_id:
+        if track.auto:
+            etat_ligne.append("✨ suggestion auto")
+        elif track.requester_id:
             etat_ligne.append(f"par <@{track.requester_id}>")
         embed.description = (ecran_lecteur(self.position(), track.duration, self._en_pause)
                              + "\n" + "  ·  ".join(etat_ligne))
@@ -631,6 +690,8 @@ class Player:
             suivant = self.queue[0]
             reste = f" (+{len(self.queue) - 1} autres)" if len(self.queue) > 1 else ""
             embed.add_field(name="Ensuite", value=f"{suivant.title[:80]}{reste}", inline=False)
+        elif self.autoplay and self.loop_mode == "off":
+            embed.add_field(name="Ensuite", value="✨ un morceau du même style (autoplay)", inline=False)
         if track.thumbnail:
             embed.set_image(url=track.thumbnail)
         return embed
@@ -1110,6 +1171,21 @@ class Music(commands.Cog):
             await interaction.response.send_message("❌ Je ne joue rien pour le moment.", ephemeral=True)
             return
         await interaction.response.send_message(embed=player.embed_lecture(player.current))
+
+    @app_commands.command(name="autoplay", description="File vide : enchaîner sur des morceaux du même style")
+    @app_commands.describe(actif="Activer ou couper l'enchaînement automatique")
+    async def autoplay(self, interaction: discord.Interaction, actif: bool):
+        player = await self.exige_player(interaction)
+        if player is None:
+            return
+        player.autoplay = actif
+        player._echecs_auto = 0
+        if not actif:   # retire les suggestions déjà prévues, pas ce que les gens ont demandé
+            player.queue[:] = [t for t in player.queue if not t.auto]
+        await interaction.response.send_message(
+            "✨ Autoplay activé : quand la file est vide, j'enchaîne sur un morceau du même style."
+            if actif else "⏹️ Autoplay coupé : je m'arrête quand la file est vide.")
+        await player.maj_message()
 
     @app_commands.command(name="loop", description="Répète le morceau en cours, toute la file, ou rien")
     @app_commands.describe(mode="Ce qu'il faut répéter")
