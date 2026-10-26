@@ -77,6 +77,25 @@ REPERES = 20                # positions proposées dans le menu « Aller à… �
 JINGLES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "jingles")
 
 
+# Le volume affiché « 100 % » correspond à ce gain ffmpeg : le niveau de base, pensé
+# pour ne pas couvrir les voix. /volume 200 le double. Avant, l'affichage montrait
+# le gain brut (50 %) alors que /volume annonçait « 100 = normal ».
+GAIN_NORMAL = 0.5
+VOLUMES_FICHIER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "volumes_musique.json")
+
+
+def pourcent_volume(gain: float) -> int:
+    return round(gain / GAIN_NORMAL * 100)
+
+
+def charger_volumes() -> dict:
+    try:
+        with open(VOLUMES_FICHIER, encoding="utf-8") as f:
+            return {int(k): float(v) for k, v in json.load(f).items()}
+    except (OSError, ValueError):
+        return {}
+
+
 def jingle_au_hasard(moment: str):
     """Une annonce au hasard pour `moment` ("arrivee" ou "depart"), ou None."""
     dossier = os.path.join(JINGLES_DIR, moment)
@@ -344,7 +363,7 @@ class Player:
 
         self.queue = []
         self.current = None
-        self.volume = 0.5
+        self.volume = cog.volumes.get(guild.id, GAIN_NORMAL)   # gain ffmpeg, pas des %
         self.loop_mode = "off"          # off | track | queue
 
         # position dans le morceau, pauses et reprises comprises
@@ -600,7 +619,7 @@ class Player:
         embed.description = ecran_lecteur(self.position(), track.duration, self._en_pause)
         if track.requester_id:
             embed.add_field(name="Demandé par", value=f"<@{track.requester_id}>")
-        embed.add_field(name="Volume", value=f"{round(self.volume * 100)} %")
+        embed.add_field(name="Volume", value=f"{pourcent_volume(self.volume)} %")
         boucle = {"off": "désactivée", "track": "🔂 ce morceau", "queue": "🔁 toute la file"}[self.loop_mode]
         embed.add_field(name="Boucle", value=boucle)
         if self.queue:
@@ -803,6 +822,16 @@ class Music(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.players = {}
+        self.volumes = charger_volumes()     # {guild_id: gain} : survit aux départs et redémarrages
+
+    def retenir_volume(self, guild_id, gain):
+        self.volumes[guild_id] = gain
+        try:
+            os.makedirs(os.path.dirname(VOLUMES_FICHIER), exist_ok=True)
+            with open(VOLUMES_FICHIER, "w", encoding="utf-8") as f:
+                json.dump({str(k): v for k, v in self.volumes.items()}, f)
+        except OSError as e:
+            print(f"[musique] volume non enregistré : {e}")
 
     def player_de(self, interaction):
         return self.players.get(interaction.guild.id)
@@ -1048,13 +1077,14 @@ class Music(commands.Cog):
         random.shuffle(player.queue)
         await interaction.response.send_message(f"🔀 {len(player.queue)} morceaux mélangés.")
 
-    @app_commands.command(name="volume", description="Règle le volume, de 0 à 200 %")
-    @app_commands.describe(niveau="0 = muet, 100 = normal, 200 = double")
-    async def volume(self, interaction: discord.Interaction, niveau: app_commands.Range[int, 0, 200]):
+    @app_commands.command(name="volume", description="Règle le volume, de 0 à 400 % (100 = normal)")
+    @app_commands.describe(niveau="0 = muet, 100 = normal, 200 = double, 400 = maximum")
+    async def volume(self, interaction: discord.Interaction, niveau: app_commands.Range[int, 0, 400]):
         player = await self.exige_player(interaction)
         if player is None:
             return
-        relance = player.changer_volume(niveau / 100)
+        relance = player.changer_volume(niveau / 100 * GAIN_NORMAL)
+        self.retenir_volume(interaction.guild.id, player.volume)
         suite = " Le morceau reprend à la même position." if relance else ""
         await interaction.response.send_message(f"🔊 Volume réglé sur {niveau} %.{suite}")
 
