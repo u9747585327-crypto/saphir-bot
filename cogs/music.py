@@ -616,12 +616,17 @@ class Player:
                 embed.description = f"Demandé par <@{track.requester_id}> · {format_duration(track.duration)}"
             return embed
 
-        embed.description = ecran_lecteur(self.position(), track.duration, self._en_pause)
+        # une seule ligne d'état sous l'écran, au lieu de trois cases éparpillées
+        pct = pourcent_volume(self.volume)
+        icone_vol = "🔇" if pct == 0 else "🔉" if pct < 100 else "🔊"
+        etat_ligne = [f"{icone_vol} **{pct} %**"]
+        if self.loop_mode != "off":
+            etat_ligne.append(f"{BOUCLES[self.loop_mode][0]} Boucle : **{LIBELLES_BOUCLE[self.loop_mode]}**")
+        etat_ligne.append(f"📜 **{len(self.queue)}** en file")
         if track.requester_id:
-            embed.add_field(name="Demandé par", value=f"<@{track.requester_id}>")
-        embed.add_field(name="Volume", value=f"{pourcent_volume(self.volume)} %")
-        boucle = {"off": "désactivée", "track": "🔂 ce morceau", "queue": "🔁 toute la file"}[self.loop_mode]
-        embed.add_field(name="Boucle", value=boucle)
+            etat_ligne.append(f"par <@{track.requester_id}>")
+        embed.description = (ecran_lecteur(self.position(), track.duration, self._en_pause)
+                             + "\n" + "  ·  ".join(etat_ligne))
         if self.queue:
             suivant = self.queue[0]
             reste = f" (+{len(self.queue) - 1} autres)" if len(self.queue) > 1 else ""
@@ -735,34 +740,56 @@ class ChoixTemps(discord.ui.Modal, title="Aller à un moment précis"):
         await self.vue.sauter(interaction, secondes)
 
 
+BOUCLES = {   # mode -> (emoji, libellé du bouton, mode suivant)
+    "off": ("🔁", "Boucle", "track"),
+    "track": ("🔂", "Morceau", "queue"),
+    "queue": ("🔁", "File", "off"),
+}
+LIBELLES_BOUCLE = {"off": "désactivée", "track": "ce morceau", "queue": "toute la file"}
+PAS_VOLUME = 10             # % par appui sur 🔉 / 🔊
+VOLUME_MAX = 400
+
+
 class ControlesLecture(discord.ui.View):
-    """Boutons sous « Lecture en cours » : reculer, pause, avancer, passer, temps précis,
-    et un menu qui sert de barre pour sauter à un moment du morceau. Réservés à ceux qui
-    sont dans le vocal avec le bot."""
+    """La télécommande sous le lecteur, rangée par usage :
+
+        ligne 1 — lecture : ⏪  ⏯  ⏩  ⏭  🔁 (la boucle change de couleur quand elle est active)
+        ligne 2 — réglages : 🔉  🔊  🔀  📜 file  ⏹
+        ligne 3 — la « barre » : un menu pour sauter n'importe où, temps précis compris
+
+    Réservée à ceux qui sont dans le vocal avec le bot."""
 
     def __init__(self, player, track):
         super().__init__(timeout=None)
         self.player, self.track = player, track
         if track.duration:
-            options = []
+            options = [discord.SelectOption(label="Temps précis…", value="precis", emoji="🕐",
+                                            description="Taper un moment exact, ex. 1:30")]
             for i in range(REPERES):
                 t = int(track.duration * i / REPERES)
                 rempli = round(10 * i / REPERES)
                 options.append(discord.SelectOption(
                     label=horodatage(t), value=str(t),
                     description=f"{'▰' * rempli}{'▱' * (10 - rempli)} {100 * i // REPERES} %"))
-            menu = discord.ui.Select(placeholder="🎚️ Aller à un moment du morceau…", options=options, row=1)
+            menu = discord.ui.Select(placeholder="🎚️ Aller à un moment du morceau…", options=options, row=2)
             menu.callback = self._menu
             self.add_item(menu)
         else:                           # direct : rien à parcourir
-            for b in (self.reculer, self.avancer, self.temps_precis):
-                b.disabled = True
+            self.reculer.disabled = self.avancer.disabled = True
         self.synchroniser()
 
     def synchroniser(self):
-        en_pause = self.player._en_pause
+        p = self.player
+        en_pause = p._en_pause
         self.pause_reprise.emoji = "▶️" if en_pause else "⏸️"
         self.pause_reprise.style = discord.ButtonStyle.success if en_pause else discord.ButtonStyle.secondary
+        emoji, libelle, _ = BOUCLES[p.loop_mode]
+        self.boucle.emoji, self.boucle.label = emoji, libelle
+        self.boucle.style = discord.ButtonStyle.secondary if p.loop_mode == "off" else discord.ButtonStyle.success
+        pct = pourcent_volume(p.volume)
+        self.vol_moins.disabled = pct <= 0
+        self.vol_plus.disabled = pct >= VOLUME_MAX
+        self.melanger.disabled = len(p.queue) < 2
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         p = self.player
@@ -787,7 +814,11 @@ class ControlesLecture(discord.ui.View):
         await self._rafraichir(interaction)
 
     async def _menu(self, interaction: discord.Interaction):
-        await self.sauter(interaction, int(interaction.data["values"][0]))
+        choix = interaction.data["values"][0]
+        if choix == "precis":
+            await interaction.response.send_modal(ChoixTemps(self))
+        else:
+            await self.sauter(interaction, int(choix))
 
     @discord.ui.button(emoji="⏪", style=discord.ButtonStyle.secondary, row=0)
     async def reculer(self, interaction: discord.Interaction, _b):
@@ -811,9 +842,62 @@ class ControlesLecture(discord.ui.View):
         self.player.passer()
         await interaction.response.send_message(f"⏭️ **{self.track.title}** passé par {interaction.user.mention}.")
 
-    @discord.ui.button(emoji="🕐", label="Temps précis", style=discord.ButtonStyle.secondary, row=0)
-    async def temps_precis(self, interaction: discord.Interaction, _b):
-        await interaction.response.send_modal(ChoixTemps(self))
+    @discord.ui.button(emoji="🔁", label="Boucle", style=discord.ButtonStyle.secondary, row=0)
+    async def boucle(self, interaction: discord.Interaction, _b):
+        p = self.player
+        p.loop_mode = BOUCLES[p.loop_mode][2]
+        await self._rafraichir(interaction)
+
+    async def _volume(self, interaction, delta):
+        p = self.player
+        pct = max(0, min(VOLUME_MAX, pourcent_volume(p.volume) + delta))
+        p.changer_volume(pct / 100 * GAIN_NORMAL)
+        p.cog.retenir_volume(p.guild.id, p.volume)
+        await self._rafraichir(interaction)
+
+    @discord.ui.button(emoji="🔉", style=discord.ButtonStyle.secondary, row=1)
+    async def vol_moins(self, interaction: discord.Interaction, _b):
+        await self._volume(interaction, -PAS_VOLUME)
+
+    @discord.ui.button(emoji="🔊", style=discord.ButtonStyle.secondary, row=1)
+    async def vol_plus(self, interaction: discord.Interaction, _b):
+        await self._volume(interaction, PAS_VOLUME)
+
+    @discord.ui.button(emoji="🔀", style=discord.ButtonStyle.secondary, row=1)
+    async def melanger(self, interaction: discord.Interaction, _b):
+        random.shuffle(self.player.queue)
+        await self._rafraichir(interaction)
+
+    @discord.ui.button(emoji="📜", label="File", style=discord.ButtonStyle.secondary, row=1)
+    async def file(self, interaction: discord.Interaction, _b):
+        await interaction.response.send_message(embed=embed_file(self.player), ephemeral=True)
+
+    @discord.ui.button(emoji="⏹️", style=discord.ButtonStyle.danger, row=1)
+    async def arreter(self, interaction: discord.Interaction, _b):
+        await interaction.response.send_message(f"⏹️ Musique arrêtée par {interaction.user.mention}.")
+        await self.player.cleanup(au_revoir=True)
+
+
+def embed_file(player) -> discord.Embed:
+    """La file d'attente : morceau en cours, les QUEUE_PAGE suivants, le total."""
+    lignes = []
+    if player.current:
+        lignes.append(f"**En cours** · [{player.current.title}]({player.current.url}) "
+                      f"`{horodatage(player.position())} / {format_duration(player.current.duration)}`")
+        lignes.append("")
+    for i, track in enumerate(player.queue[:QUEUE_PAGE], start=1):
+        lignes.append(f"`{i}.` [{track.title}]({track.url}) `{format_duration(track.duration)}`")
+    if not player.queue:
+        lignes.append("*Rien après ce morceau : `/play` pour en ajouter.*")
+    reste = len(player.queue) - QUEUE_PAGE
+    if reste > 0:
+        lignes.append(f"\n… et {reste} autre(s).")
+    total = sum(t.duration or 0 for t in player.queue)
+    embed = discord.Embed(title="🎶 File d'attente", description="\n".join(lignes),
+                          color=discord.Color(COLORS["saphir"]))
+    embed.set_footer(text=f"{len(player.queue)} en attente · {format_duration(total)} au total · "
+                          f"boucle : {LIBELLES_BOUCLE[player.loop_mode]}")
+    return embed
 
 
 class Music(commands.Cog):
@@ -1017,30 +1101,7 @@ class Music(commands.Cog):
             await interaction.response.send_message("La file est vide.", ephemeral=True)
             return
 
-        lignes = []
-        if player.current:
-            ecoule = horodatage(player.position())
-            lignes.append(
-                f"**En cours** · [{player.current.title}]({player.current.url}) "
-                f"`{ecoule} / {format_duration(player.current.duration)}`"
-            )
-            lignes.append("")
-
-        for i, track in enumerate(player.queue[:QUEUE_PAGE], start=1):
-            lignes.append(f"`{i}.` [{track.title}]({track.url}) `{format_duration(track.duration)}`")
-
-        reste = len(player.queue) - QUEUE_PAGE
-        if reste > 0:
-            lignes.append(f"\n… et {reste} autre(s).")
-
-        total = sum(t.duration or 0 for t in player.queue)
-        embed = discord.Embed(
-            title="🎶 File d'attente",
-            description="\n".join(lignes),
-            color=discord.Color(COLORS["saphir"]),
-        )
-        embed.set_footer(text=f"{len(player.queue)} en attente · {format_duration(total)} au total · boucle : {player.loop_mode}")
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed_file(player))
 
     @app_commands.command(name="nowplaying", description="Affiche le morceau en cours")
     async def nowplaying(self, interaction: discord.Interaction):
@@ -1065,6 +1126,7 @@ class Music(commands.Cog):
         libelle = {"off": "🔁 Répétition désactivée.", "track": "🔂 Je répète le morceau en cours.",
                    "queue": "🔁 Je répète toute la file."}[mode.value]
         await interaction.response.send_message(libelle)
+        await player.maj_message()
 
     @app_commands.command(name="shuffle", description="Mélange la file d'attente")
     async def shuffle(self, interaction: discord.Interaction):
@@ -1076,6 +1138,7 @@ class Music(commands.Cog):
             return
         random.shuffle(player.queue)
         await interaction.response.send_message(f"🔀 {len(player.queue)} morceaux mélangés.")
+        await player.maj_message()
 
     @app_commands.command(name="volume", description="Règle le volume, de 0 à 400 % (100 = normal)")
     @app_commands.describe(niveau="0 = muet, 100 = normal, 200 = double, 400 = maximum")
@@ -1087,6 +1150,7 @@ class Music(commands.Cog):
         self.retenir_volume(interaction.guild.id, player.volume)
         suite = " Le morceau reprend à la même position." if relance else ""
         await interaction.response.send_message(f"🔊 Volume réglé sur {niveau} %.{suite}")
+        await player.maj_message()
 
     # /clear est déjà pris par cogs/moderation.py (suppression de messages) : deux
     # commandes du même nom empêchent le bot de démarrer.
