@@ -20,7 +20,7 @@ Garde-fous, pour que ça reste une blague et pas du harcèlement :
 - en vocal, il faut être soi-même dans le salon, et un son ne coupe jamais Saphir Radio ;
 - /perroquet ne mentionne personne en répétant (pas de ping en boucle) ;
 - /surnom rend le pseudo d'origine au bout de 10 min, même après un redémarrage ;
-- /kidnapping : 22 s dans une planque avec musique d'ascenseur ; un gradé y perd ses
+- /kidnapping : 28 s dans une planque, annonce vocale puis musique d'ascenseur ; un gradé y perd ses
   rôles de staff, rendus à la fin (même après un redémarrage). S'il s'échappe ou qu'un
   modo le déplace, on ne le rattrape pas.
 """
@@ -48,7 +48,7 @@ DELAI_CIBLE = 30          # protège la victime : le staff n'en est pas dispens�
 DUREE_SURNOM = 600
 DUREE_PERROQUET = 60
 REPETITIONS_PERROQUET = 6
-DUREE_KIDNAPPING = 22      # la durée de la musique d'ascenseur
+DUREE_KIDNAPPING = 28      # annonce (~6 s) + musique d'ascenseur (22 s)
 
 # permissions qui font d'un rôle un « galon » à confisquer pendant un kidnapping
 POUVOIRS_STAFF = ("administrator", "manage_guild", "manage_roles", "manage_channels", "ban_members",
@@ -739,6 +739,22 @@ class Farces(commands.Cog):
 
     # ── /kidnapping ──────────────────────────────────────────────────────────
 
+    async def _salons_speciaux(self, guild) -> set:
+        """Vocaux où ne jamais emmener personne :
+        - le hub « créer-un-salon » : y entrer crée un salon perso et y déplace la
+          victime aussitôt, le kidnapping perd sa trace ;
+        - les compteurs de stats (« Membres : 104 ») ;
+        - les salons perso du hub, qui appartiennent à quelqu'un."""
+        reglages = (await aload_json(GUILD_SETTINGS_FILE, {})).get(str(guild.id), {})
+        hub_id = reglages.get("voice_hub_channel_id")
+        ids = {i for i in (reglages.get("stats_channel_ids") or {}).values() if i}
+        if hub_id:
+            ids.add(hub_id)
+        hub = self.bot.get_cog("VoiceHub")
+        if hub is not None and hasattr(hub, "_is_temp"):
+            ids |= {c.id for c in guild.voice_channels if hub._is_temp(c, hub_id)}
+        return ids
+
     def _galons(self, membre) -> list:
         """Rôles de staff que Saphir peut confisquer pendant un kidnapping : ceux qui
         donnent un pouvoir de modération et qui sont sous son propre rôle. Les rôles
@@ -760,12 +776,13 @@ class Farces(commands.Cog):
         return True
 
     async def _musique_ascenseur(self, salon, duree: float):
-        """Saphir rejoint la planque et y passe la musique d'ascenseur. Jamais par-dessus
-        Saphir Radio, ni si le bot fait déjà du bruit ailleurs."""
+        """Saphir rejoint la planque : annonce « vous avez été kidnappé » (voix Léo),
+        puis musique d'ascenseur jusqu'à la fin. Jamais par-dessus Saphir Radio, ni si
+        le bot fait déjà du bruit ailleurs."""
         guild = salon.guild
         musique = self.bot.get_cog("Music")
-        chemin = fichier_au_hasard("ascenseur")
-        if chemin is None or (musique is not None and musique.players.get(guild.id)):
+        sons = [s for s in (fichier_au_hasard("kidnapping"), fichier_au_hasard("ascenseur")) if s]
+        if not sons or (musique is not None and musique.players.get(guild.id)):
             return
         client = guild.voice_client
         if client is not None and client.is_playing():
@@ -778,16 +795,21 @@ class Farces(commands.Cog):
                 client = await salon.connect(self_deaf=True)
             elif client.channel != salon:
                 await client.move_to(salon)
-            fini = asyncio.Event()
             boucle = asyncio.get_running_loop()
-            client.play(discord.FFmpegOpusAudio(chemin, options="-vn"),
-                        after=lambda e: boucle.call_soon_threadsafe(fini.set))
-            try:
-                await asyncio.wait_for(fini.wait(), timeout=duree)
-            except asyncio.TimeoutError:
-                client.stop()
+            fin = time.monotonic() + duree
+            for chemin in sons:
+                reste = fin - time.monotonic()
+                if reste <= 0 or not client.is_connected():
+                    break
+                fini = asyncio.Event()
+                client.play(discord.FFmpegOpusAudio(chemin, options="-vn"),
+                            after=lambda e: boucle.call_soon_threadsafe(fini.set))
+                try:
+                    await asyncio.wait_for(fini.wait(), timeout=reste)
+                except asyncio.TimeoutError:
+                    client.stop()
         except Exception as e:
-            print(f"[farces] musique d'ascenseur non jouée : {e}")
+            print(f"[farces] annonce / musique d'ascenseur non jouée : {e}")
         finally:
             vc = guild.voice_client
             if vc is not None and not (musique is not None and musique.players.get(guild.id)):
@@ -806,8 +828,9 @@ class Farces(commands.Cog):
                                                     ephemeral=True)
             return
         guild = interaction.guild
+        interdits = await self._salons_speciaux(guild)
         planques = [c for c in guild.voice_channels
-                    if c != depart and c != guild.afk_channel
+                    if c != depart and c != guild.afk_channel and c.id not in interdits
                     and c.permissions_for(guild.me).move_members and c.permissions_for(membre).connect]
         if not planques:
             await interaction.response.send_message("❌ Aucun autre vocal où l'emmener.", ephemeral=True)
