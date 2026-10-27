@@ -55,6 +55,15 @@ POUVOIRS_STAFF = ("administrator", "manage_guild", "manage_roles", "manage_chann
                   "kick_members", "moderate_members", "move_members", "mute_members", "deafen_members",
                   "manage_messages", "manage_nicknames")
 
+NOMS_PLANQUE = [
+    "🚐 Coffre de la camionnette",
+    "🛗 Ascenseur en panne",
+    "📦 Cave sans réseau",
+    "🕳️ Sous-sol de Saphir",
+    "🧊 Chambre froide",
+    "📞 Attente du service client",
+]
+
 KIDNAP_SIMPLE = [
     "Personne n'a payé la rançon. Personne n'a même demandé.",
     "On a vérifié : il manque à personne.",
@@ -647,6 +656,19 @@ class Farces(commands.Cog):
                         pass
                 en_cours.pop(mid, None)
                 change = True
+            # planques d'un /kidnapping interrompu (redémarrage, plantage)
+            planques = reglages.get("farces_planques") or {}
+            for cid, fin in list(planques.items()):
+                if time.time() < fin + 60 or guild is None:
+                    continue
+                salon = guild.get_channel(int(cid))
+                try:
+                    if salon is not None:
+                        await salon.delete(reason="Planque de /kidnapping oubliée")
+                    planques.pop(cid, None)
+                    change = True
+                except discord.HTTPException:
+                    pass
             # galons confisqués par un /kidnapping interrompu (redémarrage, plantage)
             galons = reglages.get("farces_galons") or {}
             for mid, info in list(galons.items()):
@@ -739,6 +761,40 @@ class Farces(commands.Cog):
 
     # ── /kidnapping ──────────────────────────────────────────────────────────
 
+    async def _creer_planque(self, guild, depart):
+        """Vocal éphémère, dans la même catégorie que la victime. Noté dans les réglages
+        avant tout : même un redémarrage en plein kidnapping le fera supprimer."""
+        if not guild.me.guild_permissions.manage_channels:
+            return None
+        try:
+            salon = await guild.create_voice_channel(
+                random.choice(NOMS_PLANQUE), category=depart.category,
+                reason="/kidnapping : planque temporaire")
+        except discord.HTTPException as e:
+            print(f"[farces] planque non créée : {e}")
+            return None
+        settings = await aload_json(GUILD_SETTINGS_FILE, {})
+        settings.setdefault(str(guild.id), {}).setdefault("farces_planques", {})[str(salon.id)] = \
+            time.time() + DUREE_KIDNAPPING
+        await asave_json(GUILD_SETTINGS_FILE, settings)
+        return salon
+
+    async def _detruire_planque(self, guild, salon):
+        """Supprime une planque créée par _creer_planque ; ne touche à aucun autre salon."""
+        settings = await aload_json(GUILD_SETTINGS_FILE, {})
+        planques = settings.get(str(guild.id), {}).get("farces_planques", {})
+        if str(salon.id) not in planques:
+            return
+        try:
+            await salon.delete(reason="Fin du /kidnapping")
+        except discord.NotFound:
+            pass
+        except discord.HTTPException as e:
+            print(f"[farces] planque {salon.id} non supprimée : {e}")
+            return
+        planques.pop(str(salon.id), None)
+        await asave_json(GUILD_SETTINGS_FILE, settings)
+
     async def _salons_speciaux(self, guild) -> set:
         """Vocaux où ne jamais emmener personne :
         - le hub « créer-un-salon » : y entrer crée un salon perso et y déplace la
@@ -828,21 +884,25 @@ class Farces(commands.Cog):
                                                     ephemeral=True)
             return
         guild = interaction.guild
-        interdits = await self._salons_speciaux(guild)
-        planques = [c for c in guild.voice_channels
-                    if c != depart and c != guild.afk_channel and c.id not in interdits
-                    and c.permissions_for(guild.me).move_members and c.permissions_for(membre).connect]
-        if not planques:
-            await interaction.response.send_message("❌ Aucun autre vocal où l'emmener.", ephemeral=True)
-            return
         if not await self._peut(interaction, membre, vocal=True):
             return
-        # de préférence une planque vide : la musique d'ascenseur, c'est pour lui seul
-        vides = [c for c in planques if not c.members]
-        planque = random.choice(vides or planques)
+        # une planque créée pour l'occasion, supprimée à la fin : sur un serveur où tous
+        # les vocaux sont des salons perso ou spéciaux, il n'y avait nulle part où aller
+        planque = await self._creer_planque(guild, depart)
+        if planque is None:
+            interdits = await self._salons_speciaux(guild)
+            existants = [c for c in guild.voice_channels
+                         if c != depart and c != guild.afk_channel and c.id not in interdits
+                         and c.permissions_for(guild.me).move_members and c.permissions_for(membre).connect]
+            if not existants:
+                await interaction.response.send_message("❌ Impossible de créer une planque, et aucun autre "
+                                                        "vocal où l'emmener.", ephemeral=True)
+                return
+            planque = random.choice([c for c in existants if not c.members] or existants)
         try:
             await membre.move_to(planque, reason=f"/kidnapping par {interaction.user}")
         except discord.HTTPException:
+            await self._detruire_planque(guild, planque)
             await interaction.response.send_message("❌ Impossible de le déplacer.", ephemeral=True)
             return
         await self._discret(interaction)
@@ -864,7 +924,7 @@ class Farces(commands.Cog):
         if galons:
             intro = intro.format(roles=", ".join(f"**{r.name}**" for r in galons))
         msg = None
-        enlevement = f"🚐 {membre.mention} a été **kidnappé** et emmené dans {planque.mention}. {intro}"
+        enlevement = f"🚐 {membre.mention} a été **kidnappé** et emmené dans **{planque.name}**. {intro}"
         try:
             msg = await interaction.channel.send(
                 f"{enlevement}\n-# 🛗 Musique d'ascenseur offerte. Libération dans {DUREE_KIDNAPPING} s.",
@@ -887,14 +947,23 @@ class Farces(commands.Cog):
         # on ne le ramène que s'il est toujours là où on l'a laissé : s'il s'est
         # échappé, ou qu'un modo l'a déplacé, on n'insiste pas
         ramene = False
-        if membre.voice is not None and membre.voice.channel == planque and guild.get_channel(depart.id):
-            try:
-                await membre.move_to(depart, reason="Fin du /kidnapping")
-                ramene = True
-            except discord.HTTPException:
-                pass
+        if membre.voice is not None and membre.voice.channel == planque:
+            # son salon perso a pu être supprimé par le voicehub dès qu'il l'a quitté
+            # (il y était seul) : le hub « créer-un-salon » lui en recrée un aussitôt
+            retour = guild.get_channel(depart.id)
+            if retour is None:
+                hub_id = (await aload_json(GUILD_SETTINGS_FILE, {})).get(str(guild.id), {}).get("voice_hub_channel_id")
+                retour = guild.get_channel(hub_id) if hub_id else None
+            if retour is not None:
+                try:
+                    await membre.move_to(retour, reason="Fin du /kidnapping")
+                    ramene = True
+                except discord.HTTPException:
+                    pass
+        if guild.get_channel(planque.id) is not None:
+            await self._detruire_planque(guild, planque)
         if msg is not None:
-            fin = (f"🕊️ {membre.mention} a été libéré et ramené dans {depart.mention}." if ramene
+            fin = (f"🕊️ {membre.mention} a été libéré et ramené au bercail." if ramene
                    else f"🏃 {membre.mention} s'est fait la malle avant la fin. Respect.")
             if galons:
                 fin += " Galons rendus, il peut refaire le malin."
