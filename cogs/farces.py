@@ -20,7 +20,9 @@ Garde-fous, pour que ça reste une blague et pas du harcèlement :
 - en vocal, il faut être soi-même dans le salon, et un son ne coupe jamais Saphir Radio ;
 - /perroquet ne mentionne personne en répétant (pas de ping en boucle) ;
 - /surnom rend le pseudo d'origine au bout de 10 min, même après un redémarrage ;
-- /kidnapping est réservé à ceux qui ont le droit de déplacer des membres.
+- /kidnapping : 22 s dans une planque avec musique d'ascenseur ; un gradé y perd ses
+  rôles de staff, rendus à la fin (même après un redémarrage). S'il s'échappe ou qu'un
+  modo le déplace, on ne le rattrape pas.
 """
 
 import asyncio
@@ -46,7 +48,25 @@ DELAI_CIBLE = 30          # protège la victime : le staff n'en est pas dispens�
 DUREE_SURNOM = 600
 DUREE_PERROQUET = 60
 REPETITIONS_PERROQUET = 6
-DUREE_KIDNAPPING = 15
+DUREE_KIDNAPPING = 22      # la durée de la musique d'ascenseur
+
+# permissions qui font d'un rôle un « galon » à confisquer pendant un kidnapping
+POUVOIRS_STAFF = ("administrator", "manage_guild", "manage_roles", "manage_channels", "ban_members",
+                  "kick_members", "moderate_members", "move_members", "mute_members", "deafen_members",
+                  "manage_messages", "manage_nicknames")
+
+KIDNAP_SIMPLE = [
+    "Personne n'a payé la rançon. Personne n'a même demandé.",
+    "On a vérifié : il manque à personne.",
+    "Rançon fixée à 3 €. Les négociations patinent.",
+    "Le groupe a voté pour ne pas le récupérer tout de suite.",
+]
+KIDNAP_GRADE = [
+    "Galons confisqués : {roles}. Sans eux, c'est un membre comme un autre, et franchement ça se voit.",
+    "On lui a retiré {roles}. Il découvre la vie de ceux qu'il timeout.",
+    "{roles} saisis à l'entrée. Le pouvoir, ça se prête, ça se reprend.",
+    "Plus de {roles}. Il peut toujours essayer de se kick lui-même.",
+]
 
 BRUITAGES = {
     "pet": "💨 Pet",
@@ -627,6 +647,14 @@ class Farces(commands.Cog):
                         pass
                 en_cours.pop(mid, None)
                 change = True
+            # galons confisqués par un /kidnapping interrompu (redémarrage, plantage)
+            galons = reglages.get("farces_galons") or {}
+            for mid, info in list(galons.items()):
+                if time.time() < info["fin"] + 30 or guild is None:
+                    continue
+                if await self._rendre_galons(guild, int(mid), info["roles"]):
+                    galons.pop(mid, None)
+                    change = True
         if change:
             await asave_json(GUILD_SETTINGS_FILE, settings)
 
@@ -709,7 +737,66 @@ class Farces(commands.Cog):
     async def annonce_vocale(self, interaction: discord.Interaction):
         await self._jouer_en_vocal(interaction, fichier_au_hasard("annonces"), "📢 Annonce spéciale")
 
-    @app_commands.command(name="kidnapping", description="Embarque un membre dans un autre vocal pendant 15 s")
+    # ── /kidnapping ──────────────────────────────────────────────────────────
+
+    def _galons(self, membre) -> list:
+        """Rôles de staff que Saphir peut confisquer pendant un kidnapping : ceux qui
+        donnent un pouvoir de modération et qui sont sous son propre rôle. Les rôles
+        décoratifs restent, et ceux au-dessus de Saphir (owner…) sont hors d'atteinte."""
+        moi = membre.guild.me.top_role
+        return [r for r in membre.roles
+                if not r.is_default() and not r.managed and r < moi
+                and any(getattr(r.permissions, p) for p in POUVOIRS_STAFF)]
+
+    async def _rendre_galons(self, guild, membre_id: int, role_ids: list):
+        membre = guild.get_member(membre_id)
+        roles = [r for r in (guild.get_role(i) for i in role_ids) if r is not None]
+        if membre is not None and roles:
+            try:
+                await membre.add_roles(*roles, reason="Fin du /kidnapping : galons rendus")
+            except discord.HTTPException as e:
+                print(f"[farces] galons de {membre} non rendus : {e}")
+                return False
+        return True
+
+    async def _musique_ascenseur(self, salon, duree: float):
+        """Saphir rejoint la planque et y passe la musique d'ascenseur. Jamais par-dessus
+        Saphir Radio, ni si le bot fait déjà du bruit ailleurs."""
+        guild = salon.guild
+        musique = self.bot.get_cog("Music")
+        chemin = fichier_au_hasard("ascenseur")
+        if chemin is None or (musique is not None and musique.players.get(guild.id)):
+            return
+        client = guild.voice_client
+        if client is not None and client.is_playing():
+            return
+        droits = salon.permissions_for(guild.me)
+        if not (droits.connect and droits.speak):
+            return
+        try:
+            if client is None or not client.is_connected():
+                client = await salon.connect(self_deaf=True)
+            elif client.channel != salon:
+                await client.move_to(salon)
+            fini = asyncio.Event()
+            boucle = asyncio.get_running_loop()
+            client.play(discord.FFmpegOpusAudio(chemin, options="-vn"),
+                        after=lambda e: boucle.call_soon_threadsafe(fini.set))
+            try:
+                await asyncio.wait_for(fini.wait(), timeout=duree)
+            except asyncio.TimeoutError:
+                client.stop()
+        except Exception as e:
+            print(f"[farces] musique d'ascenseur non jouée : {e}")
+        finally:
+            vc = guild.voice_client
+            if vc is not None and not (musique is not None and musique.players.get(guild.id)):
+                try:
+                    await asyncio.wait_for(vc.disconnect(force=True), timeout=10)
+                except Exception:
+                    pass
+
+    @app_commands.command(name="kidnapping", description="Embarque un membre dans un autre vocal, musique d'ascenseur comprise")
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(membre="La victime")
     async def kidnapping(self, interaction: discord.Interaction, membre: discord.Member):
@@ -727,7 +814,9 @@ class Farces(commands.Cog):
             return
         if not await self._peut(interaction, membre, vocal=True):
             return
-        planque = random.choice(planques)
+        # de préférence une planque vide : la musique d'ascenseur, c'est pour lui seul
+        vides = [c for c in planques if not c.members]
+        planque = random.choice(vides or planques)
         try:
             await membre.move_to(planque, reason=f"/kidnapping par {interaction.user}")
         except discord.HTTPException:
@@ -735,21 +824,59 @@ class Farces(commands.Cog):
             return
         await self._discret(interaction)
         await self._tracer(interaction, "kidnapping", membre, lieu=depart)
+
+        # un gradé perd ses galons le temps de la séquestration. Noté AVANT de les
+        # retirer : même un redémarrage en plein kidnapping les rendra (restaurer_surnoms).
+        galons = self._galons(membre)
+        if galons:
+            settings = await aload_json(GUILD_SETTINGS_FILE, {})
+            settings.setdefault(str(guild.id), {}).setdefault("farces_galons", {})[str(membre.id)] = {
+                "roles": [r.id for r in galons], "fin": time.time() + DUREE_KIDNAPPING}
+            await asave_json(GUILD_SETTINGS_FILE, settings)
+            try:
+                await membre.remove_roles(*galons, reason=f"/kidnapping par {interaction.user} : galons confisqués")
+            except discord.HTTPException:
+                galons = []
+        intro = random.choice(KIDNAP_GRADE if galons else KIDNAP_SIMPLE)
+        if galons:
+            intro = intro.format(roles=", ".join(f"**{r.name}**" for r in galons))
         msg = None
+        enlevement = f"🚐 {membre.mention} a été **kidnappé** et emmené dans {planque.mention}. {intro}"
         try:
             msg = await interaction.channel.send(
-                f"🚐 {membre.mention} a été **kidnappé** et emmené dans {planque.mention} ! "
-                f"Libération dans {DUREE_KIDNAPPING} secondes… normalement.")
+                f"{enlevement}\n-# 🛗 Musique d'ascenseur offerte. Libération dans {DUREE_KIDNAPPING} s.",
+                allowed_mentions=discord.AllowedMentions(users=[membre]))
         except discord.HTTPException:
             pass
-        await asyncio.sleep(DUREE_KIDNAPPING)
-        # on ne le ramène que s'il est toujours là où on l'a laissé
+        debut = time.monotonic()
+        try:
+            await self._musique_ascenseur(planque, DUREE_KIDNAPPING)
+            # la musique a pu finir plus tôt (ou ne pas jouer) : on tient la durée promise
+            reste = DUREE_KIDNAPPING - (time.monotonic() - debut)
+            if reste > 0:
+                await asyncio.sleep(reste)
+        finally:
+            if galons:
+                if await self._rendre_galons(guild, membre.id, [r.id for r in galons]):
+                    settings = await aload_json(GUILD_SETTINGS_FILE, {})
+                    settings.get(str(guild.id), {}).get("farces_galons", {}).pop(str(membre.id), None)
+                    await asave_json(GUILD_SETTINGS_FILE, settings)
+        # on ne le ramène que s'il est toujours là où on l'a laissé : s'il s'est
+        # échappé, ou qu'un modo l'a déplacé, on n'insiste pas
+        ramene = False
         if membre.voice is not None and membre.voice.channel == planque and guild.get_channel(depart.id):
             try:
                 await membre.move_to(depart, reason="Fin du /kidnapping")
-                if msg is not None:
-                    await msg.edit(content=f"🕊️ {membre.mention} a été libéré et ramené dans {depart.mention}. "
-                                           "Plus de peur que de mal.")
+                ramene = True
+            except discord.HTTPException:
+                pass
+        if msg is not None:
+            fin = (f"🕊️ {membre.mention} a été libéré et ramené dans {depart.mention}." if ramene
+                   else f"🏃 {membre.mention} s'est fait la malle avant la fin. Respect.")
+            if galons:
+                fin += " Galons rendus, il peut refaire le malin."
+            try:
+                await msg.edit(content=f"{enlevement}\n{fin}")
             except discord.HTTPException:
                 pass
 

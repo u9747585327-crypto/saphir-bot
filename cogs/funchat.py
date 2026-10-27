@@ -122,10 +122,87 @@ async def _generate_ai_reply(channel_log: list, dossier: list = None):
         return None
 
 
+# --- Répartie quand on embête Saphir : ping, spam de pings, clash -----------------
+# {nom} = pseudo de la personne, {n} = nombre de pings récents. Ton sec, sarcastique,
+# jamais d'insulte discriminatoire.
+
+FENETRE_SPAM = 40           # s : on compte les pings sur cette fenêtre
+SEUIL_SPAM = 3              # à partir de là, c'est du spam
+SEUIL_BOUDE = 6             # et là, Saphir arrête de répondre
+DUREE_BOUDE = 180
+
+REPARTIE_PING = [
+    "Oui {nom}. Je t'écoute. Malheureusement.",
+    "Tu m'as pingé. Je suis venu. On est tous les deux déçus.",
+    "Présent. Pas ravi, mais présent.",
+    "Quoi ? T'as encore besoin d'attention ?",
+    "Je suis un bot, {nom}. Même moi j'ai mieux à faire.",
+    "Si c'est pour dire bonjour, c'est non.",
+    "J'étais bien, là. Avant.",
+    "On m'a codé pour répondre. Pas pour apprécier.",
+    "Vas-y, balance. Je ferai semblant d'être intéressé.",
+    "Encore toi. Évidemment.",
+    "Tu sais que je n'ai pas le choix de lire tes messages ? C'est ça le pire.",
+    "Je te réponds uniquement parce que mon code m'y oblige.",
+]
+
+REPARTIE_SPAM = [   # du plus calme au plus agacé : on avance avec le nombre de pings
+    "{n} pings, {nom}. Tu veux que je t'adopte ?",
+    "Oui, j'ai vu. Les {n} fois.",
+    "Ping numéro {n}. Le record du serveur est en danger.",
+    "{nom}, tu pings comme on appuie sur le bouton d'un ascenseur. Ça va pas plus vite.",
+    "À ce rythme, c'est plus une conversation, c'est une prise d'otage.",
+    "Je suis un bot, pas ton psy. {n} pings, quand même.",
+]
+
+REPARTIE_BOUDE = [
+    "{n} pings. Je ne te réponds plus pendant 3 minutes. Profite du silence, c'est ce que tu mérites.",
+    "Terminé. Je te mets en sourdine dans ma tête pour 3 minutes, {nom}.",
+    "Bravo {nom}, t'as réussi à saouler un programme. Je boude. 3 minutes.",
+]
+
+REPARTIE_CLASH = [
+    "Tu clashes un bot, {nom}. Pense à ce que ça dit de ta journée.",
+    "Dit celui qui parle à un bot à cette heure-ci.",
+    "J'ai pas d'émotions, {nom}. Donc là, c'est juste toi qui t'énerves tout seul.",
+    "C'est mignon. T'as dû y réfléchir longtemps.",
+    "Je suis du code et j'ai quand même plus de répartie que toi.",
+    "Venant de toi, je le prends presque comme un compliment.",
+    "Je te bloquerais bien, mais on m'a pas donné le bouton.",
+    "Note pour plus tard : {nom} perd ses débats contre un bot.",
+    "Insulte reçue, analysée, classée sans suite.",
+    "Je peux pas me vexer, j'ai pas d'ego. Toi par contre, ça se voit que si.",
+    "T'as tapé ça avec tes deux doigts, je suis touché.",
+    "Pas mal. Maintenant essaie sur quelqu'un qui peut répondre avec une vraie main.",
+]
+
+# mots qui font d'un ping un clash ; repérés en mot entier, sans accents ni majuscules
+MOTS_CLASH = {
+    "nul", "nulle", "naze", "con", "conne", "connard", "connasse", "debile", "idiot", "idiote",
+    "abruti", "bouffon", "clown", "clochard", "fdp", "ntm", "tg", "ftg", "pute", "merde", "merdique",
+    "inutile", "guignol", "tocard", "batard", "enfoire", "cretin", "imbecile", "boloss", "bolosse",
+    "victime", "golmon", "teubé", "teube", "cheh", "nullos", "pourri", "claque", "eclate",
+}
+
+
+def _normaliser(texte: str) -> str:
+    import unicodedata
+    texte = unicodedata.normalize("NFD", texte.lower())
+    return "".join(c for c in texte if unicodedata.category(c) != "Mn")
+
+
+def est_un_clash(texte: str) -> bool:
+    import re
+    mots = re.findall(r"[a-z]+", _normaliser(texte))
+    return any(m in MOTS_CLASH or _normaliser(m) in MOTS_CLASH for m in mots)
+
+
 class FunChat(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.channel_log = {}
+        self._pings = {}        # user_id -> horodatages (monotonic) des pings récents
+        self._boude = {}        # user_id -> monotonic() jusqu'auquel Saphir l'ignore
 
     def _log_message(self, channel_id: int, role: str, content: str):
         log = self.channel_log.setdefault(channel_id, [])
@@ -141,7 +218,7 @@ class FunChat(commands.Cog):
             self._log_message(channel_id, "assistant", reply)
             await _add_dossier_entry(message.guild.id, message.author.id, reply)
         else:
-            reply = random.choice(fallback_pool)
+            reply = random.choice(fallback_pool).format(nom=message.author.display_name, n=1)
 
         try:
             await message.reply(reply, mention_author=False)
@@ -166,7 +243,43 @@ class FunChat(commands.Cog):
 
         # ne répond plus qu'aux mentions directes du bot — plus de déclenchement aléatoire
         if self.bot.user in message.mentions:
-            await self._reply(message, FUNCHAT_MENTION_RESPONSES)
+            await self._repartie(message)
+
+    async def _repartie(self, message: discord.Message):
+        """Ping simple : vanne. Pings en rafale : agacement croissant, puis Saphir boude
+        3 min (et ne répond plus du tout, ce qui coupe aussi le spam). Clash : il renvoie."""
+        import time
+        uid, maintenant = message.author.id, time.monotonic()
+        if self._boude.get(uid, 0) > maintenant:
+            return
+        # plusieurs @Saphir dans un seul message comptent chacun
+        nb = max(1, message.content.count(f"<@{self.bot.user.id}>") + message.content.count(f"<@!{self.bot.user.id}>"))
+        recents = [t for t in self._pings.get(uid, []) if maintenant - t < FENETRE_SPAM] + [maintenant] * nb
+        self._pings[uid] = recents
+        n, nom = len(recents), message.author.display_name
+
+        if n >= SEUIL_BOUDE:
+            self._boude[uid] = maintenant + DUREE_BOUDE
+            self._pings.pop(uid, None)
+            texte = random.choice(REPARTIE_BOUDE)
+        elif n >= SEUIL_SPAM:
+            # on avance dans la liste avec le nombre de pings, avec un peu de hasard
+            i = min(len(REPARTIE_SPAM) - 1, (n - SEUIL_SPAM) * 2 + random.randint(0, 1))
+            texte = REPARTIE_SPAM[i]
+        elif est_un_clash(message.content):
+            if is_ai_enabled():
+                await self._reply(message, REPARTIE_CLASH)
+                return
+            texte = random.choice(REPARTIE_CLASH)
+        else:
+            if is_ai_enabled():
+                await self._reply(message, REPARTIE_PING)
+                return
+            texte = random.choice(REPARTIE_PING + FUNCHAT_MENTION_RESPONSES)
+        try:
+            await message.reply(texte.format(nom=nom, n=n), mention_author=False)
+        except discord.HTTPException:
+            pass
 
     @app_commands.command(name="casier", description="Affiche le casier (running gag tenu par l'IA) d'un membre")
     @app_commands.describe(membre="Membre dont voir le casier (toi par défaut)")
