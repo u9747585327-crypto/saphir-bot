@@ -1,3 +1,5 @@
+import os
+import random
 import time
 
 import discord
@@ -31,11 +33,13 @@ SPAWN_COOLDOWN_SECONDS = 15
 TEMP_CHANNEL_PREFIX = "🔊 Salon de "
 
 CONTROL_PANEL_TEXT = (
-    "✏️ **Renommer** — change le nom du salon\n"
-    "🔢 **Limite** — fixe un nombre de places max\n"
-    "🔇 **Muet** — rend un membre muet dans le salon\n"
-    "⛔ **Exclure** — déconnecte et bloque un membre"
+    "✏️ **Renommer** · 🔢 **Limite** · 🔒 **Verrouiller** · 👁️ **Masquer**\n"
+    "🤝 **Inviter** · 🔇 **Muet** · ⛔ **Exclure** · ↩️ **Réintégrer**\n"
+    "👑 **Transférer** le salon · 🙋 **Réclamer** un salon abandonné"
 )
+
+BANNIERES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "vocal")
+COULEUR_PANNEAU = 0xCBA6F7      # Catppuccin « Mauve », comme les rôles du serveur
 
 
 async def run_setup(bot, guild: discord.Guild) -> list:
@@ -92,17 +96,81 @@ async def run_setup(bot, guild: discord.Guild) -> list:
     return report
 
 
-def build_control_embed(owner: discord.Member) -> discord.Embed:
+def banniere_au_hasard():
+    try:
+        gifs = [f for f in os.listdir(BANNIERES_DIR) if f.endswith(".gif")]
+    except FileNotFoundError:
+        return None
+    return os.path.join(BANNIERES_DIR, random.choice(gifs)) if gifs else None
+
+
+def proprietaire(channel):
+    """Le propriétaire d'un salon perso : le membre qui a « Gérer le salon » dans ses
+    permissions de salon. Lu sur Discord, donc juste même après un redémarrage."""
+    for cible, perms in channel.overwrites.items():
+        if isinstance(cible, discord.Member) and perms.manage_channels:
+            return cible
+    return None
+
+
+def exclus(channel) -> list:
+    return [c for c, p in channel.overwrites.items() if isinstance(c, discord.Member) and p.connect is False]
+
+
+def est_verrouille(channel) -> bool:
+    return channel.overwrites_for(channel.guild.default_role).connect is False
+
+
+def est_masque(channel) -> bool:
+    return channel.overwrites_for(channel.guild.default_role).view_channel is False
+
+
+def build_control_embed(channel, banniere_url=None) -> discord.Embed:
+    owner = proprietaire(channel)
+    humains = [m for m in channel.members if not m.bot]
+    limite = f" / {channel.user_limit}" if channel.user_limit else ""
     embed = discord.Embed(
-        title="🎧 Ton salon vocal",
-        description=(
-            f"{owner.mention} est aux commandes. Utilise les boutons ci-dessous pour gérer ton salon :\n\n"
-            + CONTROL_PANEL_TEXT
-        ),
-        color=discord.Color(COLORS["saphir"]),
+        title=f"🎧 {channel.name}",
+        description=("Ton salon, tes règles. Tout se gère avec les boutons ci-dessous.\n"
+                     "-# Seul le propriétaire peut s'en servir."),
+        color=COULEUR_PANNEAU,
     )
-    embed.set_footer(text="Le salon disparaît automatiquement quand il se vide.")
+    if owner is not None:
+        embed.set_author(name=f"Salon de {owner.display_name}", icon_url=owner.display_avatar.url)
+    embed.add_field(name="👑 Propriétaire", value=owner.mention if owner else "*personne — 🙋 Réclamer*")
+    embed.add_field(name="👥 Membres", value=f"**{len(humains)}**{limite}")
+    embed.add_field(name="🎚️ Qualité", value=f"{channel.bitrate // 1000} kbps")
+    embed.add_field(name="🔐 Accès", value="🔒 Verrouillé (sur invitation)" if est_verrouille(channel) else "🔓 Ouvert à tous")
+    embed.add_field(name="👁️ Visibilité", value="🙈 Masqué" if est_masque(channel) else "👀 Visible")
+    nb_exclus = len(exclus(channel))
+    embed.add_field(name="⛔ Exclus", value=str(nb_exclus) if nb_exclus else "aucun")
+    if banniere_url:
+        embed.set_image(url=banniere_url)
+    embed.set_footer(text="Le salon disparaît tout seul quand il se vide.")
     return embed
+
+
+async def trouver_panneau(channel, bot_user):
+    """Le message du panneau dans le chat du salon vocal (parmi les 30 derniers)."""
+    try:
+        async for m in channel.history(limit=30):
+            if m.author.id == bot_user.id and m.components and m.embeds:
+                return m
+    except discord.HTTPException:
+        pass
+    return None
+
+
+async def rafraichir_panneau(channel, client):
+    """Remet le panneau à jour après un changement (verrou, propriétaire, exclus…)."""
+    msg = await trouver_panneau(channel, client.user)
+    if msg is None:
+        return
+    url = msg.embeds[0].image.url if msg.embeds and msg.embeds[0].image else None
+    try:
+        await msg.edit(embed=build_control_embed(channel, url), view=VoiceControlView(channel))
+    except discord.HTTPException:
+        pass
 
 
 class RenameModal(discord.ui.Modal, title="✏️ Renommer le salon"):
@@ -117,11 +185,13 @@ class RenameModal(discord.ui.Modal, title="✏️ Renommer le salon"):
             await self.channel.edit(name=str(self.name.value))
         except discord.HTTPException:
             await interaction.response.send_message(
-                "❌ Impossible de renommer le salon (il a peut-être disparu, ou permissions insuffisantes).",
+                "❌ Impossible de renommer le salon (il a peut-être disparu, ou permissions insuffisantes). "
+                "Discord limite aussi à 2 renommages toutes les 10 minutes.",
                 ephemeral=True,
             )
             return
-        await interaction.response.send_message(f"Salon renommé en **{self.name.value}**.", ephemeral=True)
+        await interaction.response.send_message(f"✏️ Salon renommé en **{self.name.value}**.", ephemeral=True)
+        await rafraichir_panneau(self.channel, interaction.client)
 
 
 class LimitModal(discord.ui.Modal, title="🔢 Limite de places"):
@@ -146,27 +216,70 @@ class LimitModal(discord.ui.Modal, title="🔢 Limite de places"):
             )
             return
         label = "illimitée" if value == 0 else str(value)
-        await interaction.response.send_message(f"Limite fixée à **{label}**.", ephemeral=True)
+        await interaction.response.send_message(f"🔢 Limite fixée à **{label}**.", ephemeral=True)
+        await rafraichir_panneau(self.channel, interaction.client)
+
+
+async def _dans_le_chat(channel, texte, pings=()):
+    """Petit message public dans le chat du salon vocal (invitation, réintégration…)."""
+    try:
+        await channel.send(texte, allowed_mentions=discord.AllowedMentions(users=list(pings)))
+    except discord.HTTPException:
+        pass
+
+
+async def transferer(channel, nouveau, raison):
+    """Passe les droits de gestion du salon à `nouveau`."""
+    ancien = proprietaire(channel)
+    if ancien is not None and ancien != nouveau:
+        perms = channel.overwrites_for(ancien)
+        perms.update(manage_channels=None, move_members=None, mute_members=None, deafen_members=None)
+        await channel.set_permissions(ancien, overwrite=None if perms.is_empty() else perms, reason=raison)
+    perms = channel.overwrites_for(nouveau)
+    perms.update(manage_channels=True, move_members=True, mute_members=True, deafen_members=True,
+                 connect=True, view_channel=True)
+    await channel.set_permissions(nouveau, overwrite=perms, reason=raison)
 
 
 class MemberPickSelect(discord.ui.Select):
+    """Choix d'un membre : ceux du salon (muet, exclure, transférer), ou les exclus
+    (réintégrer)."""
+
     def __init__(self, channel: discord.VoiceChannel, action: str):
         self.channel = channel
         self.action = action
-        options = [
-            discord.SelectOption(label=m.display_name, value=str(m.id))
-            for m in channel.members
-            if not m.bot
-        ][:25]
+        if action == "unexclude":
+            candidats = exclus(channel)
+        else:
+            owner = proprietaire(channel)
+            candidats = [m for m in channel.members if not m.bot
+                         and not (action in ("exclude", "transfer") and m == owner)]
+        options = [discord.SelectOption(label=m.display_name[:100], value=str(m.id)) for m in candidats][:25]
+        vide = "Aucun exclu" if action == "unexclude" else "Personne d'autre dans le salon"
         super().__init__(
-            placeholder="Choisis un membre..." if options else "Personne dans le salon",
+            placeholder="Choisis un membre..." if options else vide,
             options=options or [discord.SelectOption(label="—", value="none")],
             disabled=not options,
         )
 
     async def callback(self, interaction: discord.Interaction):
         member = self.channel.guild.get_member(int(self.values[0]))
-        if member is None or member.voice is None or member.voice.channel != self.channel:
+        if member is None:
+            await interaction.response.send_message("Ce membre n'est plus sur le serveur.", ephemeral=True)
+            return
+
+        if self.action == "unexclude":
+            perms = self.channel.overwrites_for(member)
+            perms.connect = None
+            await self.channel.set_permissions(member, overwrite=None if perms.is_empty() else perms,
+                                               reason=f"Réintégré par {interaction.user}")
+            await interaction.response.send_message(f"↩️ {member.display_name} peut revenir dans le salon.",
+                                                    ephemeral=True)
+            await _dans_le_chat(self.channel, f"↩️ {member.mention}, tu es réintégré : tu peux revenir.", [member])
+            await rafraichir_panneau(self.channel, interaction.client)
+            return
+
+        if member.voice is None or member.voice.channel != self.channel:
             await interaction.response.send_message("Ce membre n'est plus dans le salon.", ephemeral=True)
             return
 
@@ -182,56 +295,161 @@ class MemberPickSelect(discord.ui.Select):
             verb = "rendu muet" if new_state else "démute"
             await interaction.response.send_message(f"🔇 {member.display_name} a été {verb}.", ephemeral=True)
         elif self.action == "exclude":
-            await self.channel.set_permissions(member, connect=False, reason="Exclu du salon vocal")
+            await self.channel.set_permissions(member, connect=False, reason=f"Exclu du salon par {interaction.user}")
             await member.move_to(None, reason="Exclu du salon vocal")
-            await interaction.response.send_message(f"⛔ {member.display_name} a été exclu du salon.", ephemeral=True)
+            await interaction.response.send_message(
+                f"⛔ {member.display_name} a été exclu. **↩️ Réintégrer** pour le laisser revenir.", ephemeral=True)
+            await rafraichir_panneau(self.channel, interaction.client)
+        elif self.action == "transfer":
+            await transferer(self.channel, member, raison=f"Transféré par {interaction.user}")
+            await interaction.response.send_message(f"👑 {member.display_name} est le nouveau propriétaire.",
+                                                    ephemeral=True)
+            await _dans_le_chat(self.channel, f"👑 {member.mention} prend les commandes du salon.", [member])
+            await rafraichir_panneau(self.channel, interaction.client)
+
+
+class InviteSelect(discord.ui.UserSelect):
+    """N'importe quel membre du serveur : il pourra entrer même si le salon est
+    verrouillé ou masqué."""
+
+    def __init__(self, channel):
+        super().__init__(placeholder="Qui inviter ?", min_values=1, max_values=5)
+        self.channel = channel
+
+    async def callback(self, interaction: discord.Interaction):
+        invites = []
+        for member in self.values:
+            if member.bot or not isinstance(member, discord.Member):
+                continue
+            perms = self.channel.overwrites_for(member)
+            perms.update(connect=True, view_channel=True)
+            await self.channel.set_permissions(member, overwrite=perms, reason=f"Invité par {interaction.user}")
+            invites.append(member)
+        if not invites:
+            await interaction.response.send_message("Personne à inviter.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"🤝 Invité(s) : {', '.join(m.display_name for m in invites)}. "
+            "Ils peuvent entrer même si le salon est verrouillé.", ephemeral=True)
+        mentions = " ".join(m.mention for m in invites)
+        await _dans_le_chat(self.channel, f"🤝 {mentions}, {interaction.user.display_name} t'invite dans ce salon.",
+                            invites)
 
 
 class MemberPickView(discord.ui.View):
     def __init__(self, channel: discord.VoiceChannel, action: str):
         super().__init__(timeout=60)
-        self.add_item(MemberPickSelect(channel, action))
+        self.add_item(InviteSelect(channel) if action == "invite" else MemberPickSelect(channel, action))
 
 
 class VoiceControlView(discord.ui.View):
-    def __init__(self):
+    """Le panneau. Persistant (custom_id fixes) : les boutons marchent encore après un
+    redémarrage. `channel` sert seulement à afficher l'état des bascules (verrou,
+    visibilité) ; la vue enregistrée au démarrage n'en a pas besoin."""
+
+    def __init__(self, channel=None):
         super().__init__(timeout=None)
+        if channel is not None:
+            if est_verrouille(channel):
+                self.lock.label, self.lock.emoji, self.lock.style = "Déverrouiller", "🔓", discord.ButtonStyle.success
+            if est_masque(channel):
+                self.hide.label, self.hide.emoji, self.hide.style = "Afficher", "👀", discord.ButtonStyle.success
 
-    def _is_owner(self, interaction: discord.Interaction) -> bool:
-        perms = interaction.channel.permissions_for(interaction.user)
-        return perms.manage_channels
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Propriétaire du salon ou admin du serveur. Exception : 🙋 Réclamer, ouvert à
+        ceux qui sont dans le salon quand le propriétaire est parti."""
+        if interaction.data.get("custom_id") == "saphir_voice_claim":
+            return True
+        if interaction.user == proprietaire(interaction.channel) or interaction.user.guild_permissions.administrator:
+            return True
+        await interaction.response.send_message("👑 Seul le propriétaire du salon peut faire ça.", ephemeral=True)
+        return False
 
-    @discord.ui.button(label="Renommer", style=discord.ButtonStyle.secondary, emoji="✏️", custom_id="saphir_voice_rename")
+    async def _choisir(self, interaction, question, action):
+        await interaction.response.send_message(question, view=MemberPickView(interaction.channel, action),
+                                                ephemeral=True)
+
+    async def _apres(self, interaction, texte):
+        """Met le panneau à jour directement (c'est le message cliqué), puis confirme."""
+        channel = interaction.channel
+        url = None
+        if interaction.message and interaction.message.embeds and interaction.message.embeds[0].image:
+            url = interaction.message.embeds[0].image.url
+        await interaction.response.edit_message(embed=build_control_embed(channel, url),
+                                                view=VoiceControlView(channel))
+        await interaction.followup.send(texte, ephemeral=True)
+
+    async def _basculer(self, interaction, champ, actif_avant, texte_on, texte_off, verbe):
+        channel = interaction.channel
+        perms = channel.overwrites_for(channel.guild.default_role)
+        setattr(perms, champ, None if actif_avant else False)
+        await channel.set_permissions(channel.guild.default_role, overwrite=None if perms.is_empty() else perms,
+                                      reason=f"Salon {verbe} par {interaction.user}")
+        await self._apres(interaction, texte_off if actif_avant else texte_on)
+
+    # ── ligne 1 : le salon ──
+
+    @discord.ui.button(label="Renommer", style=discord.ButtonStyle.secondary, emoji="✏️", custom_id="saphir_voice_rename", row=0)
     async def rename(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not self._is_owner(interaction):
-            await interaction.response.send_message("Seul le propriétaire du salon peut faire ça.", ephemeral=True)
-            return
         await interaction.response.send_modal(RenameModal(interaction.channel))
 
-    @discord.ui.button(label="Limite", style=discord.ButtonStyle.secondary, emoji="🔢", custom_id="saphir_voice_limit")
+    @discord.ui.button(label="Limite", style=discord.ButtonStyle.secondary, emoji="🔢", custom_id="saphir_voice_limit", row=0)
     async def limit(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not self._is_owner(interaction):
-            await interaction.response.send_message("Seul le propriétaire du salon peut faire ça.", ephemeral=True)
-            return
         await interaction.response.send_modal(LimitModal(interaction.channel))
 
-    @discord.ui.button(label="Muet", style=discord.ButtonStyle.secondary, emoji="🔇", custom_id="saphir_voice_mute")
-    async def mute(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not self._is_owner(interaction):
-            await interaction.response.send_message("Seul le propriétaire du salon peut faire ça.", ephemeral=True)
-            return
-        await interaction.response.send_message(
-            "Qui veux-tu rendre muet / démute ?", view=MemberPickView(interaction.channel, "mute"), ephemeral=True
-        )
+    @discord.ui.button(label="Verrouiller", style=discord.ButtonStyle.secondary, emoji="🔒", custom_id="saphir_voice_lock", row=0)
+    async def lock(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._basculer(interaction, "connect", est_verrouille(interaction.channel),
+                             "🔒 Salon verrouillé : seuls les invités (🤝) et ceux déjà dedans restent.",
+                             "🔓 Salon ouvert à tous.", "verrouillé/déverrouillé")
 
-    @discord.ui.button(label="Exclure", style=discord.ButtonStyle.danger, emoji="⛔", custom_id="saphir_voice_exclude")
+    @discord.ui.button(label="Masquer", style=discord.ButtonStyle.secondary, emoji="👁️", custom_id="saphir_voice_hide", row=0)
+    async def hide(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._basculer(interaction, "view_channel", est_masque(interaction.channel),
+                             "🙈 Salon masqué : invisible pour les autres, sauf les invités (🤝).",
+                             "👀 Salon de nouveau visible.", "masqué/affiché")
+
+    # ── ligne 2 : les membres ──
+
+    @discord.ui.button(label="Inviter", style=discord.ButtonStyle.success, emoji="🤝", custom_id="saphir_voice_invite", row=1)
+    async def invite(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._choisir(interaction, "Qui veux-tu inviter (même si le salon est verrouillé) ?", "invite")
+
+    @discord.ui.button(label="Muet", style=discord.ButtonStyle.secondary, emoji="🔇", custom_id="saphir_voice_mute", row=1)
+    async def mute(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._choisir(interaction, "Qui veux-tu rendre muet / démute ?", "mute")
+
+    @discord.ui.button(label="Exclure", style=discord.ButtonStyle.danger, emoji="⛔", custom_id="saphir_voice_exclude", row=1)
     async def exclude(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not self._is_owner(interaction):
-            await interaction.response.send_message("Seul le propriétaire du salon peut faire ça.", ephemeral=True)
+        await self._choisir(interaction, "Qui veux-tu exclure du salon ?", "exclude")
+
+    @discord.ui.button(label="Réintégrer", style=discord.ButtonStyle.secondary, emoji="↩️", custom_id="saphir_voice_unexclude", row=1)
+    async def unexclude(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._choisir(interaction, "Qui laisser revenir ?", "unexclude")
+
+    # ── ligne 3 : la propriété ──
+
+    @discord.ui.button(label="Transférer", style=discord.ButtonStyle.secondary, emoji="👑", custom_id="saphir_voice_transfer", row=2)
+    async def transfer(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._choisir(interaction, "À qui donner le salon ?", "transfer")
+
+    @discord.ui.button(label="Réclamer", style=discord.ButtonStyle.secondary, emoji="🙋", custom_id="saphir_voice_claim", row=2)
+    async def claim(self, interaction: discord.Interaction, button: discord.ui.Button):
+        channel, user = interaction.channel, interaction.user
+        owner = proprietaire(channel)
+        if owner == user:
+            await interaction.response.send_message("👑 C'est déjà ton salon.", ephemeral=True)
             return
-        await interaction.response.send_message(
-            "Qui veux-tu exclure du salon ?", view=MemberPickView(interaction.channel, "exclude"), ephemeral=True
-        )
+        if user.voice is None or user.voice.channel != channel:
+            await interaction.response.send_message("Il faut être dans le salon pour le réclamer.", ephemeral=True)
+            return
+        if owner is not None and owner.voice is not None and owner.voice.channel == channel:
+            await interaction.response.send_message(f"👑 {owner.display_name} est encore là, son salon reste le sien.",
+                                                    ephemeral=True)
+            return
+        await transferer(channel, user, raison="Salon réclamé (propriétaire parti)")
+        await self._apres(interaction, "🙋 Le salon est à toi.")
+        await _dans_le_chat(channel, f"🙋 {user.mention} a repris le salon, son propriétaire était parti.")
 
 
 class VoiceHub(commands.Cog):
@@ -398,9 +616,18 @@ class VoiceHub(commands.Cog):
                 return
 
             try:
-                await new_channel.send(embed=build_control_embed(member), view=VoiceControlView())
-            except discord.HTTPException:
-                pass
+                gif = banniere_au_hasard()
+                fichier = discord.File(gif, filename="banniere.gif") if gif else None
+                extra = {"file": fichier} if fichier else {}
+                await new_channel.send(
+                    content=member.mention,
+                    embed=build_control_embed(new_channel, "attachment://banniere.gif" if fichier else None),
+                    view=VoiceControlView(new_channel),
+                    allowed_mentions=discord.AllowedMentions(users=[member]),
+                    **extra,
+                )
+            except discord.HTTPException as e:
+                print(f"⚠️ VoiceHub : panneau non envoyé ({e})")
 
         # demute local : si un membre mute via le panneau rejoint un AUTRE salon vocal, on
         # retire son mute serveur (le mute ne devait valoir que dans le salon d'origine).
