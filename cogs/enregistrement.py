@@ -1,0 +1,338 @@
+"""
+cogs/enregistrement.py
+/rec : enregistre un salon vocal, une piste par personne, puis poste le mixage en MP3.
+
+Enregistrer des gens à leur insu est illégal (art. 226-1 du Code pénal) : tout ici est
+pensé pour que personne ne puisse l'ignorer.
+- seuls les admins et le propriétaire lancent un /rec ;
+- annonce vocale au début et à la fin, message dans le chat du vocal, statut du salon
+  « 🔴 Enregistrement » ;
+- chaque personne qui arrive pendant l'enregistrement est prévenue ;
+- /rec-sans-moi : n'importe qui retire sa voix (sa piste est effacée, la suite ignorée) ;
+- /stop-rec : n'importe quelle personne présente dans le vocal arrête tout.
+
+L'écoute passe par discord-ext-voice-recv, dans une version qui sait déchiffrer le
+chiffrement de bout en bout (DAVE) des vocaux Discord : la version publiée sur PyPI ne
+le sait pas et produit du bruit. Voir requirements.txt.
+
+Discord n'envoie rien quand quelqu'un se tait : chaque piste est donc complétée par du
+silence calé sur l'horloge, sans quoi les voix se décaleraient au mixage.
+"""
+
+import asyncio
+import os
+import shutil
+import subprocess
+import threading
+import time
+
+import discord
+from discord import app_commands
+from discord.ext import commands
+
+from cogs._shared import handle_app_error
+
+try:
+    from discord.ext import voice_recv
+except ImportError:   # le cog se charge quand même, /rec explique ce qui manque
+    voice_recv = None
+
+_BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DOSSIER_REC = os.path.join(_BASE, "data", "enregistrements")
+ANNONCES = os.path.join(_BASE, "assets", "enregistrement")
+
+DUREE_MAX = 2 * 3600        # s : au-delà, l'enregistrement s'arrête tout seul
+TAUX = 48000                # Discord : 48 kHz, stéréo, 16 bits
+OCTETS_PAR_ECHANTILLON = 4
+TROU_MIN = 960 * 3          # en dessous de 60 ms de trou, inutile de combler
+
+
+class Pistes(voice_recv.AudioSink if voice_recv else object):
+    """Reçoit l'audio de chaque membre et l'encode au fil de l'eau (un ffmpeg par
+    personne, en Opus mono) : rien de gros ne reste en mémoire ni sur le disque.
+    Appelé depuis le thread de réception de la bibliothèque, d'où le verrou."""
+
+    def __init__(self, dossier: str):
+        super().__init__()
+        self.dossier = dossier
+        self.debut = time.monotonic()
+        self.pistes = {}            # user_id -> {"proc", "ecrits", "decalage", "nom"}
+        self.exclus = set()
+        self._verrou = threading.Lock()
+
+    def wants_opus(self) -> bool:
+        return False
+
+    def _ouvrir(self, user):
+        chemin = os.path.join(self.dossier, f"{user.id}.ogg")
+        proc = subprocess.Popen(
+            ["ffmpeg", "-loglevel", "error", "-f", "s16le", "-ar", str(TAUX), "-ac", "2", "-i", "pipe:0",
+             "-ac", "1", "-c:a", "libopus", "-b:a", "48k", "-y", chemin],
+            stdin=subprocess.PIPE)
+        return {"proc": proc, "ecrits": 0, "decalage": time.monotonic() - self.debut,
+                "nom": getattr(user, "display_name", str(user)), "chemin": chemin}
+
+    def write(self, user, data):
+        if user is None or getattr(user, "bot", False) or not data.pcm:
+            return
+        with self._verrou:
+            if user.id in self.exclus:
+                return
+            piste = self.pistes.get(user.id)
+            if piste is None:
+                piste = self.pistes[user.id] = self._ouvrir(user)
+            # silence pendant qu'il se taisait : la piste reste calée sur l'horloge
+            attendu = int((time.monotonic() - self.debut - piste["decalage"]) * TAUX)
+            trou = attendu - piste["ecrits"]
+            try:
+                while trou > TROU_MIN:
+                    bloc = min(trou, TAUX)
+                    piste["proc"].stdin.write(b"\x00" * (bloc * OCTETS_PAR_ECHANTILLON))
+                    piste["ecrits"] += bloc
+                    trou -= bloc
+                piste["proc"].stdin.write(data.pcm)
+                piste["ecrits"] += len(data.pcm) // OCTETS_PAR_ECHANTILLON
+            except (BrokenPipeError, OSError):
+                pass
+
+    def retirer(self, user_id: int):
+        """/rec-sans-moi : la piste est fermée et effacée, la suite ignorée."""
+        with self._verrou:
+            self.exclus.add(user_id)
+            piste = self.pistes.pop(user_id, None)
+        if piste is not None:
+            self._fermer(piste)
+            try:
+                os.remove(piste["chemin"])
+            except OSError:
+                pass
+
+    @staticmethod
+    def _fermer(piste):
+        try:
+            piste["proc"].stdin.close()
+            piste["proc"].wait(timeout=30)
+        except Exception:
+            piste["proc"].kill()
+
+    def cleanup(self):
+        with self._verrou:
+            pistes = list(self.pistes.values())
+        for p in pistes:
+            self._fermer(p)
+
+
+def mixer(pistes: list, sortie: str) -> bool:
+    """Mixe les pistes (chacune décalée à son heure d'arrivée) en un MP3 mono."""
+    pistes = [p for p in pistes if os.path.exists(p["chemin"]) and os.path.getsize(p["chemin"]) > 0]
+    if not pistes:
+        return False
+    cmd = ["ffmpeg", "-loglevel", "error"]
+    for p in pistes:
+        cmd += ["-i", p["chemin"]]
+    filtres = [f"[{i}:a]adelay={int(p['decalage'] * 1000)}:all=1[a{i}]" for i, p in enumerate(pistes)]
+    entrees = "".join(f"[a{i}]" for i in range(len(pistes)))
+    filtres.append(f"{entrees}amix=inputs={len(pistes)}:normalize=0:duration=longest[m]")
+    cmd += ["-filter_complex", ";".join(filtres), "-map", "[m]", "-ac", "1", "-b:a", "64k", "-y", sortie]
+    return subprocess.run(cmd).returncode == 0 and os.path.exists(sortie)
+
+
+class Enregistrement(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.sessions = {}          # guild_id -> session (dict)
+
+    # ── outils ───────────────────────────────────────────────────────────────
+
+    async def _annonce_vocale(self, vc, nom):
+        chemin = os.path.join(ANNONCES, f"{nom}.ogg")
+        if not os.path.exists(chemin) or vc is None or not vc.is_connected():
+            return
+        fini = asyncio.Event()
+        boucle = asyncio.get_running_loop()
+        try:
+            vc.play(discord.FFmpegOpusAudio(chemin, options="-vn"),
+                    after=lambda e: boucle.call_soon_threadsafe(fini.set))
+            await asyncio.wait_for(fini.wait(), timeout=15)
+        except Exception as e:
+            print(f"[rec] annonce « {nom} » non jouée : {e}")
+
+    async def _statut(self, salon, texte):
+        try:
+            await salon.edit(status=texte)
+        except (discord.HTTPException, TypeError, AttributeError):
+            pass
+
+    # ── commandes ────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="rec", description="Enregistre ton salon vocal (annoncé à tous)")
+    @app_commands.default_permissions(manage_guild=True)
+    async def rec(self, interaction: discord.Interaction):
+        droits = interaction.user.guild_permissions
+        if not (droits.administrator or droits.manage_guild):
+            await interaction.response.send_message("🔒 Réservé aux admins et au propriétaire.", ephemeral=True)
+            return
+        if voice_recv is None:
+            await interaction.response.send_message("❌ Le module d'écoute n'est pas installé sur le serveur.",
+                                                    ephemeral=True)
+            return
+        guild = interaction.guild
+        voix = interaction.user.voice
+        if voix is None or voix.channel is None:
+            await interaction.response.send_message("🔈 Rejoins le vocal à enregistrer.", ephemeral=True)
+            return
+        if guild.id in self.sessions:
+            await interaction.response.send_message("🔴 Un enregistrement est déjà en cours.", ephemeral=True)
+            return
+        if guild.voice_client is not None:
+            await interaction.response.send_message(
+                "🎵 Saphir est déjà en vocal (musique ?). Arrête-le d'abord avec `/stop`.", ephemeral=True)
+            return
+        salon = voix.channel
+        await interaction.response.defer(thinking=True)
+        try:
+            # pas de self_deaf : un bot sourd ne reçoit rien
+            vc = await salon.connect(cls=voice_recv.VoiceRecvClient, self_deaf=False)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Connexion au vocal impossible : {e}")
+            return
+
+        dossier = os.path.join(DOSSIER_REC, f"{guild.id}-{int(time.time())}")
+        os.makedirs(dossier, exist_ok=True)
+        pistes = Pistes(dossier)
+        session = {"vc": vc, "salon": salon, "pistes": pistes, "dossier": dossier,
+                   "texte": interaction.channel, "lanceur": interaction.user, "debut": time.time()}
+        self.sessions[guild.id] = session
+        session["minuteur"] = asyncio.create_task(self._limite(guild.id))
+
+        await self._annonce_vocale(vc, "debut")
+        vc.listen(pistes)
+        await self._statut(salon, "🔴 Enregistrement en cours")
+        presents = [m for m in salon.members if not m.bot]
+        avis = (f"🔴 **Enregistrement en cours** dans {salon.mention}, lancé par {interaction.user.mention}.\n"
+                f"Pour ne pas être enregistré : `/rec-sans-moi`. Pour tout arrêter : `/stop-rec`.\n"
+                f"-# Durée max {DUREE_MAX // 3600} h · le fichier sera posté ici à la fin.")
+        await interaction.followup.send(avis)
+        try:
+            await salon.send(f"🔴 {' '.join(m.mention for m in presents)} ce vocal est **enregistré**. "
+                             "`/rec-sans-moi` pour retirer ta voix.",
+                             allowed_mentions=discord.AllowedMentions(users=presents))
+        except discord.HTTPException:
+            pass
+
+    @app_commands.command(name="stop-rec", description="Arrête l'enregistrement du vocal et poste le fichier")
+    async def stop_rec(self, interaction: discord.Interaction):
+        session = self.sessions.get(interaction.guild.id)
+        if session is None:
+            await interaction.response.send_message("Aucun enregistrement en cours.", ephemeral=True)
+            return
+        voix = interaction.user.voice
+        dans_le_salon = voix is not None and voix.channel == session["salon"]
+        droits = interaction.user.guild_permissions
+        if not (dans_le_salon or droits.administrator or droits.manage_guild):
+            await interaction.response.send_message("Il faut être dans le vocal enregistré pour l'arrêter.",
+                                                    ephemeral=True)
+            return
+        await interaction.response.send_message(f"⏹️ Enregistrement arrêté par {interaction.user.mention}, "
+                                                "je prépare le fichier…")
+        await self.terminer(interaction.guild.id, raison=f"arrêté par {interaction.user.display_name}")
+
+    @app_commands.command(name="rec-sans-moi", description="Retire ta voix de l'enregistrement en cours")
+    async def rec_sans_moi(self, interaction: discord.Interaction):
+        session = self.sessions.get(interaction.guild.id)
+        if session is None:
+            await interaction.response.send_message("Aucun enregistrement en cours.", ephemeral=True)
+            return
+        await asyncio.to_thread(session["pistes"].retirer, interaction.user.id)
+        await interaction.response.send_message(
+            "✅ Ta voix est retirée : ce qui avait été enregistré est effacé, et la suite ne le sera pas.",
+            ephemeral=True)
+        try:
+            await session["salon"].send(f"🔕 {interaction.user.display_name} a retiré sa voix de l'enregistrement.")
+        except discord.HTTPException:
+            pass
+
+    # ── fin ──────────────────────────────────────────────────────────────────
+
+    async def _limite(self, guild_id):
+        await asyncio.sleep(DUREE_MAX)
+        await self.terminer(guild_id, raison="durée maximale atteinte")
+
+    async def terminer(self, guild_id, raison: str):
+        session = self.sessions.pop(guild_id, None)
+        if session is None:
+            return
+        tache = session.get("minuteur")
+        if tache and tache is not asyncio.current_task():
+            tache.cancel()
+        vc, salon, pistes = session["vc"], session["salon"], session["pistes"]
+        try:
+            if vc.is_listening():
+                vc.stop_listening()
+        except Exception:
+            pass
+        await asyncio.to_thread(pistes.cleanup)
+        if vc.is_connected():
+            await self._annonce_vocale(vc, "fin")
+            try:
+                await asyncio.wait_for(vc.disconnect(force=True), timeout=10)
+            except Exception:
+                pass
+        await self._statut(salon, None)
+
+        duree = int(time.time() - session["debut"])
+        sortie = os.path.join(session["dossier"], "enregistrement.mp3")
+        ok = await asyncio.to_thread(mixer, list(pistes.pistes.values()), sortie)
+        texte = session["texte"]
+        voix = ", ".join(p["nom"] for p in pistes.pistes.values()) or "personne"
+        entete = (f"🎙️ **Enregistrement de {salon.name}** ({duree // 60} min {duree % 60:02d} s, {raison})\n"
+                  f"Voix : {voix}")
+        try:
+            if not ok:
+                await texte.send(f"{entete}\n⚠️ Rien d'audible n'a été capté.")
+            elif os.path.getsize(sortie) > texte.guild.filesize_limit:
+                await texte.send(f"{entete}\n📁 Fichier trop lourd pour Discord "
+                                 f"({os.path.getsize(sortie) // 1_000_000} Mo) : gardé sur le serveur, "
+                                 f"`{os.path.relpath(sortie, _BASE)}`.")
+                return
+            else:
+                await texte.send(entete, file=discord.File(sortie, filename=f"rec-{salon.name[:40]}.mp3"))
+        except discord.HTTPException as e:
+            print(f"[rec] envoi du fichier impossible : {e}")
+            return
+        shutil.rmtree(session["dossier"], ignore_errors=True)
+
+    # ── surveillance du vocal ────────────────────────────────────────────────
+
+    @commands.Cog.listener()
+    async def on_voice_state_update(self, member, before, after):
+        session = self.sessions.get(member.guild.id)
+        if session is None:
+            return
+        salon = session["salon"]
+        if member.id == self.bot.user.id:
+            if after.channel is None:       # Saphir déconnecté (expulsé, coupure)
+                await self.terminer(member.guild.id, raison="Saphir a été déconnecté")
+            return
+        if member.bot:
+            return
+        if after.channel == salon and before.channel != salon:
+            try:
+                await salon.send(f"🔴 {member.mention}, ce vocal est **enregistré**. "
+                                 "`/rec-sans-moi` pour retirer ta voix.",
+                                 allowed_mentions=discord.AllowedMentions(users=[member]))
+            except discord.HTTPException:
+                pass
+        if before.channel == salon and not any(not m.bot for m in salon.members):
+            await self.terminer(member.guild.id, raison="plus personne dans le vocal")
+
+    async def cog_unload(self):
+        for gid in list(self.sessions):
+            await self.terminer(gid, raison="redémarrage de Saphir")
+
+    async def cog_app_command_error(self, interaction, error):
+        await handle_app_error(interaction, error, command_label="l'enregistrement")
+
+
+async def setup(bot):
+    await bot.add_cog(Enregistrement(bot))

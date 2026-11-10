@@ -30,6 +30,7 @@ INITIAL_COGS = [
     "cogs.community",
     "cogs.voicehub",
     "cogs.music",
+    "cogs.enregistrement",
     "cogs.farces",
     "cogs.bringall",
     "cogs.honeypot",

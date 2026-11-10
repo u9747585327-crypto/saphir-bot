@@ -7,3 +7,6 @@ dnspython>=2.0.0
 groq>=1.0.0
 aiohttp>=3.9.0
 yt-dlp[default]>=2026.1.1
+# écoute des vocaux (/rec) : version qui déchiffre le chiffrement DAVE de Discord.
+# La version PyPI ne le fait pas (audio illisible) ; commit épinglé de la PR n°54.
+discord-ext-voice-recv @ git+https://github.com/rdphillips7/discord-ext-voice-recv.git@e0cc062ee2fe10311ffacdd4a4d00de707d6b1a7
