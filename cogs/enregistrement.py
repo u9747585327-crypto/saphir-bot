@@ -31,6 +31,8 @@ from discord import app_commands
 from discord.ext import commands
 
 from cogs._shared import handle_app_error
+from config import GUILD_SETTINGS_FILE
+from storage import aload_json, asave_json
 
 try:
     from discord.ext import voice_recv
@@ -41,6 +43,7 @@ _BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOSSIER_REC = os.path.join(_BASE, "data", "enregistrements")
 ANNONCES = os.path.join(_BASE, "assets", "enregistrement")
 
+NOM_SALON_LOGS = "「🎙️」enregistrements"
 DUREE_MAX = 2 * 3600        # s : au-delà, l'enregistrement s'arrête tout seul
 TAUX = 48000                # Discord : 48 kHz, stéréo, 16 bits
 OCTETS_PAR_ECHANTILLON = 4
@@ -163,6 +166,30 @@ class Enregistrement(commands.Cog):
         except (discord.HTTPException, TypeError, AttributeError):
             pass
 
+    async def salon_logs(self, guild):
+        """Salon « enregistrements » dans la catégorie des logs : créé au premier besoin,
+        avec les droits de la catégorie (staff seulement), retrouvé ensuite par son ID."""
+        settings = await aload_json(GUILD_SETTINGS_FILE, {})
+        ids = settings.setdefault(str(guild.id), {}).setdefault("log_channel_ids", {})
+        salon = guild.get_channel(ids.get("recordings") or 0)
+        if salon is not None:
+            return salon
+        autre = guild.get_channel(ids.get("voice") or ids.get("moderation") or 0)
+        categorie = autre.category if autre is not None else discord.utils.find(
+            lambda c: "LOGS" in c.name.upper(), guild.categories)
+        try:
+            salon = await guild.create_text_channel(
+                NOM_SALON_LOGS, category=categorie,
+                overwrites=categorie.overwrites if categorie else {
+                    guild.default_role: discord.PermissionOverwrite(view_channel=False)},
+                reason="Salon des enregistrements vocaux (/rec)")
+        except discord.HTTPException as e:
+            print(f"[rec] salon d'enregistrements non créé : {e}")
+            return None
+        ids["recordings"] = salon.id
+        await asave_json(GUILD_SETTINGS_FILE, settings)
+        return salon
+
     # ── commandes ────────────────────────────────────────────────────────────
 
     @app_commands.command(name="rec", description="Enregistre ton salon vocal (annoncé à tous)")
@@ -211,7 +238,7 @@ class Enregistrement(commands.Cog):
         presents = [m for m in salon.members if not m.bot]
         avis = (f"🔴 **Enregistrement en cours** dans {salon.mention}, lancé par {interaction.user.mention}.\n"
                 f"Pour ne pas être enregistré : `/rec-sans-moi`. Pour tout arrêter : `/stop-rec`.\n"
-                f"-# Durée max {DUREE_MAX // 3600} h · le fichier sera posté ici à la fin.")
+                f"-# Durée max {DUREE_MAX // 3600} h · le fichier ira dans les logs du staff.")
         await interaction.followup.send(avis)
         try:
             await salon.send(f"🔴 {' '.join(m.mention for m in presents)} ce vocal est **enregistré**. "
@@ -283,10 +310,17 @@ class Enregistrement(commands.Cog):
         duree = int(time.time() - session["debut"])
         sortie = os.path.join(session["dossier"], "enregistrement.mp3")
         ok = await asyncio.to_thread(mixer, list(pistes.pistes.values()), sortie)
-        texte = session["texte"]
+        logs = await self.salon_logs(salon.guild)
+        texte = logs or session["texte"]       # repli : le salon où /rec a été lancé
+        if logs is not None:
+            try:
+                await session["texte"].send(f"🎙️ Enregistrement de **{salon.name}** terminé ({raison}), "
+                                            "envoyé dans les logs du staff.")
+            except discord.HTTPException:
+                pass
         voix = ", ".join(p["nom"] for p in pistes.pistes.values()) or "personne"
         entete = (f"🎙️ **Enregistrement de {salon.name}** ({duree // 60} min {duree % 60:02d} s, {raison})\n"
-                  f"Voix : {voix}")
+                  f"Lancé par {session['lanceur'].mention} · voix : {voix}")
         try:
             if not ok:
                 await texte.send(f"{entete}\n⚠️ Rien d'audible n'a été capté.")
@@ -296,11 +330,16 @@ class Enregistrement(commands.Cog):
                                  f"`{os.path.relpath(sortie, _BASE)}`.")
                 return
             else:
-                await texte.send(entete, file=discord.File(sortie, filename=f"rec-{salon.name[:40]}.mp3"))
+                await texte.send(entete, allowed_mentions=discord.AllowedMentions.none(), file=discord.File(sortie, filename=f"rec-{salon.name[:40]}.mp3"))
         except discord.HTTPException as e:
             print(f"[rec] envoi du fichier impossible : {e}")
             return
         shutil.rmtree(session["dossier"], ignore_errors=True)
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        for guild in self.bot.guilds:
+            await self.salon_logs(guild)
 
     # ── surveillance du vocal ────────────────────────────────────────────────
 
