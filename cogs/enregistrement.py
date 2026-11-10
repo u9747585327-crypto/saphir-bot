@@ -9,7 +9,8 @@ pensé pour que personne ne puisse l'ignorer.
   « 🔴 Enregistrement » ;
 - chaque personne qui arrive pendant l'enregistrement est prévenue ;
 - /rec-sans-moi : n'importe qui retire sa voix (sa piste est effacée, la suite ignorée) ;
-- /stop-rec : n'importe quelle personne présente dans le vocal arrête tout.
+- /stop-rec : n'importe quelle personne présente dans le vocal arrête tout ; pas de
+  durée maximale, l'enregistrement s'arrête aussi quand le vocal se vide.
 
 L'écoute passe par discord-ext-voice-recv, dans une version qui sait déchiffrer le
 chiffrement de bout en bout (DAVE) des vocaux Discord : la version publiée sur PyPI ne
@@ -44,7 +45,6 @@ DOSSIER_REC = os.path.join(_BASE, "data", "enregistrements")
 ANNONCES = os.path.join(_BASE, "assets", "enregistrement")
 
 NOM_SALON_LOGS = "「🎙️」enregistrements"
-DUREE_MAX = 2 * 3600        # s : au-delà, l'enregistrement s'arrête tout seul
 TAUX = 48000                # Discord : 48 kHz, stéréo, 16 bits
 OCTETS_PAR_ECHANTILLON = 4
 TROU_MIN = 960 * 3          # en dessous de 60 ms de trou, inutile de combler
@@ -230,7 +230,6 @@ class Enregistrement(commands.Cog):
         session = {"vc": vc, "salon": salon, "pistes": pistes, "dossier": dossier,
                    "texte": interaction.channel, "lanceur": interaction.user, "debut": time.time()}
         self.sessions[guild.id] = session
-        session["minuteur"] = asyncio.create_task(self._limite(guild.id))
 
         await self._annonce_vocale(vc, "debut")
         vc.listen(pistes)
@@ -238,7 +237,7 @@ class Enregistrement(commands.Cog):
         presents = [m for m in salon.members if not m.bot]
         avis = (f"🔴 **Enregistrement en cours** dans {salon.mention}, lancé par {interaction.user.mention}.\n"
                 f"Pour ne pas être enregistré : `/rec-sans-moi`. Pour tout arrêter : `/stop-rec`.\n"
-                f"-# Durée max {DUREE_MAX // 3600} h · le fichier ira dans les logs du staff.")
+                f"-# Pas de limite de durée · le fichier ira dans les logs du staff.")
         await interaction.followup.send(avis)
         try:
             await salon.send(f"🔴 {' '.join(m.mention for m in presents)} ce vocal est **enregistré**. "
@@ -281,17 +280,10 @@ class Enregistrement(commands.Cog):
 
     # ── fin ──────────────────────────────────────────────────────────────────
 
-    async def _limite(self, guild_id):
-        await asyncio.sleep(DUREE_MAX)
-        await self.terminer(guild_id, raison="durée maximale atteinte")
-
     async def terminer(self, guild_id, raison: str):
         session = self.sessions.pop(guild_id, None)
         if session is None:
             return
-        tache = session.get("minuteur")
-        if tache and tache is not asyncio.current_task():
-            tache.cancel()
         vc, salon, pistes = session["vc"], session["salon"], session["pistes"]
         try:
             if vc.is_listening():
