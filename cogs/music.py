@@ -53,6 +53,11 @@ from cogs._shared import handle_app_error
 from config import COLORS
 
 try:
+    from discord.ext import voice_recv     # pour qu'un /rec puisse écouter pendant la musique
+except ImportError:
+    voice_recv = None
+
+try:
     import yt_dlp
 except ImportError:  # dépendance absente : le cog se charge mais prévient proprement
     yt_dlp = None
@@ -95,6 +100,11 @@ def charger_volumes() -> dict:
             return {int(k): float(v) for k, v in json.load(f).items()}
     except (OSError, ValueError):
         return {}
+
+
+def enregistrement_en_cours(bot, guild) -> bool:
+    cog = bot.get_cog("Enregistrement")
+    return cog is not None and guild.id in cog.sessions
 
 
 def jingle_au_hasard(moment: str):
@@ -390,6 +400,7 @@ class Player:
         self._en_pause = False
         self._passer = False            # /skip : fin voulue, à ne pas prendre pour une coupure
         self._relance = False           # /volume, /seek : relancer le flux
+        self._intercalaire = None       # son à glisser au milieu du morceau (annonce /rec)
         self._cible = None              # /seek : position voulue à la relance (None = même endroit)
         self._flux = None               # (url, en-têtes) du morceau en cours
         self.vue = None                 # boutons du message « Lecture en cours »
@@ -402,9 +413,22 @@ class Player:
         self._tache_intro = self.bot.loop.create_task(self._jouer_intro())
         self.task = self.bot.loop.create_task(self.runner())
 
+    def intercaler(self, chemin: str) -> bool:
+        """Glisse un son au milieu du morceau en cours (annonce d'enregistrement), puis
+        reprend la musique au même endroit. False si rien ne joue."""
+        if self._flux is None or self.voice is None or not (self.voice.is_playing() or self.voice.is_paused()):
+            return False
+        self._intercalaire = chemin
+        self._cible = self.position()
+        self._relance = True
+        self.voice.stop()
+        return True
+
     async def _jouer_annonce(self, moment: str):
         """Joue une annonce Saphir Radio et attend sa fin (20 s au plus)."""
-        chemin = jingle_au_hasard(moment)
+        await self._jouer_fichier(jingle_au_hasard(moment))
+
+    async def _jouer_fichier(self, chemin):
         if not chemin or self.voice is None or not self.voice.is_connected():
             return
         fini = asyncio.Event()
@@ -590,6 +614,12 @@ class Player:
                 self._relance = False
                 debut = pos if self._cible is None else self._cible
                 self._cible = None
+                if self._intercalaire:
+                    chemin, self._intercalaire = self._intercalaire, None
+                    try:
+                        await self._jouer_fichier(chemin)
+                    except Exception as e:
+                        print(f"[musique] son intercalé non joué : {e}")
                 continue
             if track.duration is None or pos >= track.duration - 5:
                 return                  # fin normale (ou direct, sans durée connue)
@@ -774,9 +804,11 @@ class Player:
                         await self._jouer_annonce("depart")
                     except Exception as e:
                         print(f"[musique] annonce de départ non jouée : {e}")
-                # force=True suffit normalement, mais une passerelle vocale qui ne
-                # répond plus peut faire traîner l'appel : on ne bloque jamais dessus.
-                await asyncio.wait_for(voice.disconnect(force=True), timeout=10)
+                # pendant un /rec, Saphir reste : c'est l'enregistrement qui décide
+                if not enregistrement_en_cours(self.bot, self.guild):
+                    # force=True suffit normalement, mais une passerelle vocale qui ne
+                    # répond plus peut faire traîner l'appel : on ne bloque jamais dessus.
+                    await asyncio.wait_for(voice.disconnect(force=True), timeout=10)
             except Exception:
                 pass
         self.cog.players.pop(self.guild.id, None)
@@ -1006,13 +1038,19 @@ class Music(commands.Cog):
         client = interaction.guild.voice_client
         if client is None:
             try:
-                client = await salon.connect(self_deaf=True)
+                # client capable d'écouter : un /rec pourra démarrer pendant la musique
+                cls = voice_recv.VoiceRecvClient if voice_recv else discord.VoiceClient
+                client = await salon.connect(cls=cls, self_deaf=True)
             except discord.ClientException:
                 client = interaction.guild.voice_client
             except Exception as e:
                 await interaction.followup.send(f"❌ Connexion au vocal impossible : {e}", ephemeral=True)
                 return None
         elif client.channel != salon:
+            if enregistrement_en_cours(self.bot, interaction.guild):
+                await interaction.followup.send(
+                    f"🔴 J'enregistre {client.channel.mention} : rejoins-le pour mettre de la musique.", ephemeral=True)
+                return None
             await client.move_to(salon)
 
         player = self.players.get(interaction.guild.id)

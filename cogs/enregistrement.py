@@ -9,7 +9,8 @@ pensé pour que personne ne puisse l'ignorer.
   « 🔴 Enregistrement » ;
 - chaque personne qui arrive pendant l'enregistrement est prévenue ;
 - /rec-sans-moi : n'importe qui retire sa voix (sa piste est effacée, la suite ignorée) ;
-- /stop-rec : n'importe quelle personne présente dans le vocal arrête tout ; pas de
+- /stop-rec : n'importe quelle personne présente dans le vocal arrête tout (c'est
+  le seul moyen : déconnecté ou déplacé, Saphir revient) ; pas de
   durée maximale, l'enregistrement s'arrête aussi quand le vocal se vide.
 
 L'écoute passe par discord-ext-voice-recv, dans une version qui sait déchiffrer le
@@ -119,6 +120,11 @@ class Pistes(voice_recv.AudioSink if voice_recv else object):
             piste["proc"].kill()
 
     def cleanup(self):
+        """Appelé par la bibliothèque à chaque arrêt d'écoute, y compris quand Saphir est
+        déconnecté : on ne ferme rien ici, sinon la reconnexion écrirait dans le vide.
+        La vraie fermeture, c'est fermer(), à la fin de l'enregistrement."""
+
+    def fermer(self):
         with self._verrou:
             pistes = list(self.pistes.values())
         for p in pistes:
@@ -150,6 +156,13 @@ class Enregistrement(commands.Cog):
     async def _annonce_vocale(self, vc, nom):
         chemin = os.path.join(ANNONCES, f"{nom}.ogg")
         if not os.path.exists(chemin) or vc is None or not vc.is_connected():
+            return
+        if vc.is_playing() or vc.is_paused():
+            # musique en cours : l'annonce passe au milieu, puis le morceau reprend
+            musique = self.bot.get_cog("Music")
+            player = musique.players.get(vc.guild.id) if musique else None
+            if player is not None and player.intercaler(chemin):
+                await asyncio.sleep(7)
             return
         fini = asyncio.Event()
         boucle = asyncio.get_running_loop()
@@ -211,15 +224,25 @@ class Enregistrement(commands.Cog):
         if guild.id in self.sessions:
             await interaction.response.send_message("🔴 Un enregistrement est déjà en cours.", ephemeral=True)
             return
-        if guild.voice_client is not None:
-            await interaction.response.send_message(
-                "🎵 Saphir est déjà en vocal (musique ?). Arrête-le d'abord avec `/stop`.", ephemeral=True)
-            return
         salon = voix.channel
+        vc = guild.voice_client
+        if vc is not None:
+            if vc.channel != salon:
+                await interaction.response.send_message(
+                    f"🎵 Je suis déjà dans {vc.channel.mention}. Rejoins-le, ou `/stop` d'abord.", ephemeral=True)
+                return
+            if not isinstance(vc, voice_recv.VoiceRecvClient):
+                await interaction.response.send_message(
+                    "🎵 Cette session de musique a démarré avant la mise à jour : fais `/stop` puis relance.",
+                    ephemeral=True)
+                return
         await interaction.response.defer(thinking=True)
         try:
-            # pas de self_deaf : un bot sourd ne reçoit rien
-            vc = await salon.connect(cls=voice_recv.VoiceRecvClient, self_deaf=False)
+            if vc is None:
+                # pas de self_deaf : un bot sourd ne reçoit rien
+                vc = await salon.connect(cls=voice_recv.VoiceRecvClient, self_deaf=False)
+            else:
+                await guild.change_voice_state(channel=salon, self_deaf=False)
         except Exception as e:
             await interaction.followup.send(f"❌ Connexion au vocal impossible : {e}")
             return
@@ -290,13 +313,16 @@ class Enregistrement(commands.Cog):
                 vc.stop_listening()
         except Exception:
             pass
-        await asyncio.to_thread(pistes.cleanup)
+        await asyncio.to_thread(pistes.fermer)
+        musique = self.bot.get_cog("Music")
+        en_musique = musique is not None and musique.players.get(guild_id) is not None
         if vc.is_connected():
             await self._annonce_vocale(vc, "fin")
-            try:
-                await asyncio.wait_for(vc.disconnect(force=True), timeout=10)
-            except Exception:
-                pass
+            if not en_musique:          # la musique continue si elle tournait
+                try:
+                    await asyncio.wait_for(vc.disconnect(force=True), timeout=10)
+                except Exception:
+                    pass
         await self._statut(salon, None)
 
         duree = int(time.time() - session["debut"])
@@ -342,8 +368,7 @@ class Enregistrement(commands.Cog):
             return
         salon = session["salon"]
         if member.id == self.bot.user.id:
-            if after.channel is None:       # Saphir déconnecté (expulsé, coupure)
-                await self.terminer(member.guild.id, raison="Saphir a été déconnecté")
+            await self._garder_en_place(member.guild, session, after)
             return
         if member.bot:
             return
@@ -356,6 +381,40 @@ class Enregistrement(commands.Cog):
                 pass
         if before.channel == salon and not any(not m.bot for m in salon.members):
             await self.terminer(member.guild.id, raison="plus personne dans le vocal")
+
+    async def _garder_en_place(self, guild, session, after):
+        """Pendant un /rec, Saphir ne se laisse ni déconnecter, ni déplacer, ni rendre
+        sourd : il revient et l'enregistrement continue (les pistes comblent le trou).
+        Seul /stop-rec l'arrête. Après 5 échecs de suite (salon supprimé…), on termine
+        proprement avec ce qui a été enregistré."""
+        salon = session["salon"]
+        try:
+            if after.channel is None:
+                await asyncio.sleep(1)
+                if guild.id not in self.sessions or guild.voice_client is not None:
+                    return
+                if guild.get_channel(salon.id) is None:
+                    await self.terminer(guild.id, raison="le salon vocal a été supprimé")
+                    return
+                vc = await salon.connect(cls=voice_recv.VoiceRecvClient, self_deaf=False)
+                session["vc"] = vc
+                vc.listen(session["pistes"])
+                session["retours"] = 0
+                try:
+                    await salon.send("🔴 On m'a déconnecté : je suis revenu, l'enregistrement continue. "
+                                     "`/stop-rec` pour l'arrêter.")
+                except discord.HTTPException:
+                    pass
+            elif after.channel != salon:
+                await guild.voice_client.move_to(salon)
+            elif after.deaf or after.self_deaf:
+                await guild.me.edit(deafen=False)
+                await guild.change_voice_state(channel=salon, self_deaf=False)
+        except Exception as e:
+            session["retours"] = session.get("retours", 0) + 1
+            print(f"[rec] retour dans le vocal impossible ({session['retours']}/5) : {e}")
+            if session["retours"] >= 5:
+                await self.terminer(guild.id, raison="Saphir n'a pas pu revenir dans le vocal")
 
     async def cog_unload(self):
         for gid in list(self.sessions):
