@@ -1,4 +1,5 @@
 import asyncio
+import re
 
 import discord
 from discord import app_commands
@@ -151,6 +152,39 @@ class Broadcast(commands.Cog):
             await interaction.response.send_message("On ne peut pas envoyer de MP à un bot.", ephemeral=True)
             return
         await interaction.response.send_modal(BroadcastMessageModal([membre], membre.mention))
+
+    @app_commands.command(name="mp-ids", description="Envoie un MP à une liste d'ID Discord")
+    @app_commands.describe(ids="Un ou plusieurs ID Discord, séparés par des espaces, virgules ou retours à la ligne")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def mp_ids(self, interaction: discord.Interaction, ids: str):
+        trouves, inconnus = [], []
+        for brut in dict.fromkeys(re.findall(r"\d{17,20}", ids)):     # sans doublons, dans l'ordre
+            uid = int(brut)
+            cible = interaction.guild.get_member(uid)
+            if cible is None:
+                # hors du serveur : Discord ne laisse un bot écrire qu'à ceux avec qui il
+                # partage un serveur, l'envoi échouera sans doute, mais on tente
+                try:
+                    cible = await self.bot.fetch_user(uid)
+                except discord.HTTPException:
+                    inconnus.append(brut)
+                    continue
+            if not cible.bot:
+                trouves.append(cible)
+        if not trouves:
+            await interaction.response.send_message(
+                "❌ Aucun ID valide." + (f" Introuvables : {', '.join(inconnus)}" if inconnus else ""), ephemeral=True)
+            return
+        label = f"{len(trouves)} personne(s) : " + ", ".join(getattr(c, "display_name", c.name) for c in trouves[:20])
+        if len(trouves) > 20:
+            label += f"… (+{len(trouves) - 20})"
+        if inconnus:
+            label += f"\n-# ID introuvables, ignorés : {', '.join(inconnus)}"
+        await interaction.response.send_modal(BroadcastMessageModal(trouves, label))
+
+    @mp_ids.error
+    async def mp_ids_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        await _broadcast_error(interaction, error, "mp-ids")
 
     @mp_tous.error
     async def mp_tous_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
