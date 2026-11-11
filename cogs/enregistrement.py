@@ -22,6 +22,7 @@ silence calé sur l'horloge, sans quoi les voix se décaleraient au mixage.
 """
 
 import asyncio
+import datetime
 import os
 import shutil
 import subprocess
@@ -129,6 +130,42 @@ class Pistes(voice_recv.AudioSink if voice_recv else object):
             pistes = list(self.pistes.values())
         for p in pistes:
             self._fermer(p)
+
+
+def decouper(fichier: str, taille_max: int) -> list:
+    """Coupe un MP3 trop lourd en parties qui passent sous `taille_max` (marge de 10 %).
+    Copie directe du flux (-c copy) : instantané, sans perte de qualité."""
+    if os.path.getsize(fichier) <= taille_max:
+        return [fichier]
+    duree = float(subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", fichier],
+        capture_output=True, text=True).stdout or 0)
+    if duree <= 0:
+        return [fichier]
+    nb = int(os.path.getsize(fichier) / (taille_max * 0.9)) + 1
+    tranche = duree / nb
+    modele = os.path.join(os.path.dirname(fichier), "partie_%02d.mp3")
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-i", fichier, "-f", "segment", "-segment_time",
+                    f"{tranche:.2f}", "-c", "copy", "-reset_timestamps", "1", "-y", modele])
+    dossier = os.path.dirname(fichier)
+    return sorted(os.path.join(dossier, f) for f in os.listdir(dossier)
+                  if f.startswith("partie_") and f.endswith(".mp3"))
+
+
+async def envoyer_en_parties(salon, entete, fichier, nom):
+    """Poste l'enregistrement, en plusieurs messages si besoin. True si tout est parti."""
+    parties = await asyncio.to_thread(decouper, fichier, salon.guild.filesize_limit)
+    n = len(parties)
+    for i, partie in enumerate(parties, 1):
+        if os.path.getsize(partie) > salon.guild.filesize_limit:
+            await salon.send(f"{entete}\n📁 Partie {i}/{n} encore trop lourde : gardée sur le serveur, "
+                             f"`{os.path.relpath(partie, _BASE)}`.")
+            return False
+        texte = entete if n == 1 else (f"{entete}\n📼 Partie **{i}/{n}**" if i == 1 else f"📼 Partie **{i}/{n}**")
+        suffixe = "" if n == 1 else f"-partie{i}"
+        await salon.send(texte, allowed_mentions=discord.AllowedMentions.none(),
+                         file=discord.File(partie, filename=f"{nom}{suffixe}.mp3"))
+    return True
 
 
 def mixer(pistes: list, sortie: str) -> bool:
@@ -342,13 +379,8 @@ class Enregistrement(commands.Cog):
         try:
             if not ok:
                 await texte.send(f"{entete}\n⚠️ Rien d'audible n'a été capté.")
-            elif os.path.getsize(sortie) > texte.guild.filesize_limit:
-                await texte.send(f"{entete}\n📁 Fichier trop lourd pour Discord "
-                                 f"({os.path.getsize(sortie) // 1_000_000} Mo) : gardé sur le serveur, "
-                                 f"`{os.path.relpath(sortie, _BASE)}`.")
-                return
-            else:
-                await texte.send(entete, allowed_mentions=discord.AllowedMentions.none(), file=discord.File(sortie, filename=f"rec-{salon.name[:40]}.mp3"))
+            elif not await envoyer_en_parties(texte, entete, sortie, f"rec-{salon.name[:40]}"):
+                return          # une partie n'a pas pu partir : on garde tout sur le serveur
         except discord.HTTPException as e:
             print(f"[rec] envoi du fichier impossible : {e}")
             return
@@ -357,7 +389,28 @@ class Enregistrement(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         for guild in self.bot.guilds:
-            await self.salon_logs(guild)
+            salon = await self.salon_logs(guild)
+            if salon is not None:
+                await self._rattrapage(guild, salon)
+
+    async def _rattrapage(self, guild, salon):
+        """Enregistrements restés sur le serveur (trop lourds avant le découpage, envoi
+        raté) : postés au démarrage, puis effacés."""
+        try:
+            dossiers = sorted(d for d in os.listdir(DOSSIER_REC) if d.startswith(f"{guild.id}-"))
+        except FileNotFoundError:
+            return
+        for d in dossiers:
+            chemin = os.path.join(DOSSIER_REC, d)
+            mp3 = os.path.join(chemin, "enregistrement.mp3")
+            if any(s["dossier"] == chemin for s in self.sessions.values()) or not os.path.exists(mp3):
+                continue
+            quand = discord.utils.format_dt(datetime.datetime.fromtimestamp(int(d.split("-")[1])), "f")
+            try:
+                if await envoyer_en_parties(salon, f"🎙️ **Enregistrement en attente** (lancé le {quand})", mp3, f"rec-{d}"):
+                    shutil.rmtree(chemin, ignore_errors=True)
+            except discord.HTTPException as e:
+                print(f"[rec] rattrapage de {d} impossible : {e}")
 
     # ── surveillance du vocal ────────────────────────────────────────────────
 
