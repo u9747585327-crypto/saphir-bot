@@ -37,13 +37,14 @@ import datetime
 import enum
 import io
 import re
+import time
 
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
 from config import COLORS, GUILD_SETTINGS_FILE, LOG_CHANNELS, LOGS_CATEGORY_NAME, STAFF_ROLE_NAMES
-from services import message_store
+from services import message_store, vocal_store
 from services.setup_kit import adopt_category, adopt_text_channel, find_text_channel, hidden_overwrites
 from storage import aload_json, asave_json
 
@@ -51,7 +52,7 @@ A = discord.AuditLogAction
 
 # Un salon de log manquant (ajouté après le dernier /setup-logs) se rabat sur un voisin
 # plutôt que de perdre le log.
-REPLI = {"permissions": "roles"}
+REPLI = {"permissions": "roles", "invites": "server"}
 
 
 async def resolve_log_channel(bot, guild, key):
@@ -379,6 +380,9 @@ class Logs(commands.Cog):
         # évènement ; rempli à la demande, vidé par run_setup quand les salons changent
         self._log_ids = {}
         self._corr = _Correlateur()
+        self._invites = {}      # guild_id -> {code: (utilisations, id du créateur)}
+        self._vanity = {}       # guild_id -> utilisations du lien personnalisé
+        self._voc = {}          # (guild_id, member_id) -> (salon, début time.time())
         self.menage.start()
 
     async def cog_unload(self):
@@ -665,7 +669,7 @@ class Logs(commands.Cog):
             lignes = lignes_changements(entry)
             if lignes:
                 e.add_field(name="Détails", value=_trim("\n".join(lignes), 1024), inline=False)
-            out.append(("server", e))
+            out.append(("invites", e))
 
         # ── tout le reste : serveur, emojis, autocollants, événements, AutoMod... ──
         else:
@@ -699,7 +703,11 @@ class Logs(commands.Cog):
             embed.add_field(name="🤖", value="C'est un bot")
         embed.set_thumbnail(url=member.display_avatar.url)
         embed.set_footer(text=f"ID : {member.id}")
+        source = await self._invitation_utilisee(member.guild)
+        if source is not None:
+            embed.add_field(name="✉️ Venu par", value=source["court"], inline=False)
         await self._log(member.guild, "join_leave", embed)
+        await self._log_arrivee_invitation(member, source)
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
@@ -989,6 +997,9 @@ class Logs(commands.Cog):
         guild = member.guild
 
         if before.channel != after.channel:
+            duree = await self._fin_session(member, before.channel)
+            if after.channel is not None:
+                self._voc[(guild.id, member.id)] = (after.channel, time.time())
             if before.channel is None:
                 embed = discord.Embed(
                     title="🎙️ Connexion vocale",
@@ -1032,6 +1043,9 @@ class Logs(commands.Cog):
                         description=f"{member.mention} : {before.channel.mention} → {after.channel.mention} (de lui-même)",
                         color=discord.Color(COLORS["gold"]),
                     )
+            if duree is not None:
+                embed.add_field(name="⏱️ Resté", value=f"{_duree(datetime.timedelta(seconds=duree))} "
+                                f"dans {before.channel.mention}")
             embed.set_footer(text=f"ID : {member.id}")
             await self._log(guild, "voice", embed)
 
@@ -1063,8 +1077,154 @@ class Logs(commands.Cog):
     #  Démarrage et ménage
     # ------------------------------------------------------------------ #
 
+    # ------------------------------------------------------------------ #
+    #  Invitations : qui a fait venir qui
+    # ------------------------------------------------------------------ #
+
+    async def _charger_invites(self, guild):
+        """Photo des compteurs d'utilisation : à l'arrivée suivante, l'invitation dont le
+        compteur a augmenté est celle qui a servi."""
+        try:
+            invites = await guild.invites()
+        except discord.HTTPException:
+            return None
+        self._invites[guild.id] = {i.code: (i.uses or 0, i.inviter.id if i.inviter else None, i.max_uses or 0)
+                                   for i in invites}
+        if "VANITY_URL" in guild.features:
+            try:
+                self._vanity[guild.id] = (await guild.vanity_invite()).uses or 0
+            except discord.HTTPException:
+                pass
+        return invites
+
+    async def _invitation_utilisee(self, guild):
+        avant = self._invites.get(guild.id)
+        vanity_avant = self._vanity.get(guild.id)
+        invites = await self._charger_invites(guild)
+        if invites is None or avant is None:
+            return None
+        par_code = {i.code: i for i in invites}
+        for code, inv in par_code.items():
+            if (inv.uses or 0) > avant.get(code, (0, None, 0))[0]:
+                return self._decrire(guild, code, inv.inviter.id if inv.inviter else None, inv.uses or 0)
+        # une invitation à usage limité qui vient d'atteindre sa limite a été supprimée
+        for code, (uses, inviter, max_uses) in avant.items():
+            if code not in par_code and max_uses and uses + 1 >= max_uses:
+                return self._decrire(guild, code, inviter, uses + 1, epuisee=True)
+        if vanity_avant is not None and self._vanity.get(guild.id, 0) > vanity_avant:
+            return {"court": f"lien personnalisé `{guild.vanity_url_code}`", "code": guild.vanity_url_code,
+                    "inviter": None, "uses": self._vanity[guild.id]}
+        return {"court": "inconnu (lien éphémère, widget ou découverte)", "code": None, "inviter": None, "uses": None}
+
+    def _decrire(self, guild, code, inviter_id, uses, epuisee=False):
+        createur = f"<@{inviter_id}>" if inviter_id else "inconnu"
+        fin = " — dernière utilisation, lien supprimé" if epuisee else ""
+        return {"court": f"`discord.gg/{code}` créé par {createur} ({uses} utilisation(s){fin})",
+                "code": code, "inviter": inviter_id, "uses": uses}
+
+    async def _log_arrivee_invitation(self, member, source):
+        if source is None:
+            return
+        e = discord.Embed(title="📨 Arrivée par invitation",
+                          description=f"{member.mention} ({member}) a rejoint le serveur.",
+                          color=discord.Color(COLORS["success"]))
+        e.add_field(name="Lien utilisé", value=f"`discord.gg/{source['code']}`" if source["code"] else source["court"])
+        if source["inviter"]:
+            total = sum(u for u, inv, _ in self._invites.get(member.guild.id, {}).values() if inv == source["inviter"])
+            e.add_field(name="Invité par", value=f"<@{source['inviter']}>")
+            e.add_field(name="Ses invitations actives", value=f"{total} arrivée(s) au total")
+        if source["uses"] is not None:
+            e.add_field(name="Utilisations du lien", value=str(source["uses"]))
+        e.set_thumbnail(url=member.display_avatar.url)
+        e.set_footer(text=f"ID : {member.id}")
+        await self._log(member.guild, "invites", e)
+
+    @commands.Cog.listener()
+    async def on_invite_create(self, invite):
+        if invite.guild is not None:
+            self._invites.setdefault(invite.guild.id, {})[invite.code] = (
+                invite.uses or 0, invite.inviter.id if invite.inviter else None, invite.max_uses or 0)
+
+    @commands.Cog.listener()
+    async def on_invite_delete(self, invite):
+        # on garde l'entrée un instant : si un membre arrive juste après, c'est que
+        # l'invitation venait d'atteindre sa limite (voir _invitation_utilisee)
+        pass
+
+    # ------------------------------------------------------------------ #
+    #  Historique vocal
+    # ------------------------------------------------------------------ #
+
+    async def _fin_session(self, member, salon):
+        """Ferme le passage en cours dans `salon` : l'enregistre, renvoie sa durée (s)."""
+        session = self._voc.pop((member.guild.id, member.id), None)
+        if session is None or salon is None:
+            return None
+        debut = session[1]
+        fin = time.time()
+        await vocal_store.ajouter(member.guild.id, member.id, salon.id, salon.name, debut, fin)
+        return fin - debut
+
+    @app_commands.command(name="historique-vocal", description="Historique vocal d'un membre : où, quand, combien de temps")
+    @app_commands.describe(membre="Le membre à consulter")
+    @app_commands.default_permissions(moderate_members=True)
+    async def historique_vocal(self, interaction: discord.Interaction, membre: discord.Member):
+        dernieres, totaux, salons = await vocal_store.historique(interaction.guild.id, membre.id)
+        e = discord.Embed(title=f"🎙️ Historique vocal de {membre.display_name}",
+                          color=discord.Color(COLORS["saphir"]))
+        e.set_thumbnail(url=membre.display_avatar.url)
+        en_cours = self._voc.get((interaction.guild.id, membre.id))
+        if en_cours:
+            salon, debut = en_cours
+            e.add_field(name="🟢 En ce moment",
+                        value=f"{salon.mention} depuis {discord.utils.format_dt(datetime.datetime.fromtimestamp(debut, datetime.timezone.utc), 'R')}",
+                        inline=False)
+        t = lambda s: _duree(datetime.timedelta(seconds=s)) if s else "0 min"
+        e.add_field(name="⏱️ Temps en vocal", value=f"24 h : **{t(totaux[1])}**\n7 jours : **{t(totaux[7])}**\n"
+                                                   f"30 jours : **{t(totaux[30])}**")
+        if salons:
+            e.add_field(name="📍 Salons favoris (30 j)",
+                        value="\n".join(f"{nom} — {t(s)}" for nom, s in salons))
+        if dernieres:
+            lignes = []
+            for cid, nom, debut, fin in dernieres:
+                quand = discord.utils.format_dt(datetime.datetime.fromtimestamp(debut, datetime.timezone.utc), "f")
+                lignes.append(f"{quand} · **{nom}** · {t(fin - debut)}")
+            e.add_field(name=f"🕘 {len(dernieres)} derniers passages", value=_trim("\n".join(lignes), 1024), inline=False)
+        else:
+            e.add_field(name="🕘 Passages", value="Aucun passage enregistré pour l'instant.", inline=False)
+        e.set_footer(text=f"Historique gardé {vocal_store.RETENTION_JOURS} jours")
+        await interaction.response.send_message(embed=e, ephemeral=True)
+
+    async def _assurer_salon_invitations(self, guild):
+        """Crée le salon « invitations » à côté des autres logs, avec les mêmes droits."""
+        settings = await aload_json(GUILD_SETTINGS_FILE, {})
+        ids = settings.setdefault(str(guild.id), {}).setdefault("log_channel_ids", {})
+        if guild.get_channel(ids.get("invites") or 0):
+            return
+        modele = guild.get_channel(ids.get("server") or ids.get("voice") or 0)
+        if modele is None:
+            return
+        try:
+            salon = await guild.create_text_channel(LOG_CHANNELS["invites"], category=modele.category,
+                                                    overwrites=modele.overwrites,
+                                                    reason="Salon de logs des invitations")
+        except discord.HTTPException as e:
+            print(f"[logs] salon invitations non créé : {e}")
+            return
+        ids["invites"] = salon.id
+        await asave_json(GUILD_SETTINGS_FILE, settings)
+        self._log_ids.pop(guild.id, None)
+
     @commands.Cog.listener()
     async def on_ready(self):
+        for guild in self.bot.guilds:
+            await self._assurer_salon_invitations(guild)
+            await self._charger_invites(guild)
+            # passages déjà en cours au démarrage : comptés à partir de maintenant
+            for salon in guild.voice_channels:
+                for m in salon.members:
+                    self._voc.setdefault((guild.id, m.id), (salon, time.time()))
         for guild in self.bot.guilds:
             if guild.me.guild_permissions.view_audit_log:
                 continue
@@ -1083,6 +1243,7 @@ class Logs(commands.Cog):
     async def menage(self):
         try:
             await message_store.purger()
+            await vocal_store.purger()
         except Exception as e:
             print(f"[logs] ménage de la mémoire des messages : {e}")
 

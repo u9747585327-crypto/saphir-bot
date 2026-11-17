@@ -95,6 +95,7 @@ LOG_CHANNELS = {
     "permissions": _ch("🔐", "permissions"),
     "channels": _ch("📁", "salons"),
     "server": _ch("⚙️", "serveur"),
+    "invites": _ch("✉️", "invitations"),
 }
 
 # niveaux (XP texte + vocal cumulés)
