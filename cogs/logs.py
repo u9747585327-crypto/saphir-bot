@@ -443,6 +443,10 @@ class Logs(commands.Cog):
             return
         if embed.timestamp is None:
             embed.timestamp = discord.utils.utcnow()
+        # copie dans le casier du membre concerné (cogs/casiers.py), sans attendre
+        casiers = self.bot.get_cog("Casiers")
+        if casiers is not None:
+            asyncio.create_task(casiers.miroir(guild, embed.copy()))
         try:
             await channel.send(embed=embed, files=self._construire(pieces or []))
         except discord.HTTPException:

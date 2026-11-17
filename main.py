@@ -37,6 +37,7 @@ INITIAL_COGS = [
     "cogs.antiraid",
     "cogs.prison",
     "cogs.logs",
+    "cogs.casiers",
     "cogs.leveling",
     "cogs.stats",
     "cogs.hierarchy",
