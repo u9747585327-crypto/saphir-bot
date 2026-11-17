@@ -1196,6 +1196,33 @@ class Logs(commands.Cog):
         e.set_footer(text=f"Historique gardé {vocal_store.RETENTION_JOURS} jours")
         await interaction.response.send_message(embed=e, ephemeral=True)
 
+    @app_commands.command(name="activite-vocale", description="Qui a rejoint quel vocal et quand, qui a créé quel salon")
+    @app_commands.default_permissions(moderate_members=True)
+    async def activite_vocale(self, interaction: discord.Interaction):
+        passages, salons = await vocal_store.activite(interaction.guild.id, 20)
+        t = lambda s: _duree(datetime.timedelta(seconds=s)) if s and s >= 1 else "—"
+        quand = lambda ts: discord.utils.format_dt(datetime.datetime.fromtimestamp(ts, datetime.timezone.utc), "R")
+        e = discord.Embed(title="🎙️ Activité vocale du serveur", color=discord.Color(COLORS["saphir"]))
+        en_ligne = [(m, s, d) for (gid, mid), (s, d) in self._voc.items()
+                    if gid == interaction.guild.id and (m := interaction.guild.get_member(mid)) and not m.bot]
+        if en_ligne:
+            e.add_field(name=f"🟢 En vocal maintenant ({len(en_ligne)})",
+                        value=_trim("\n".join(f"{m.mention} · {s.mention} · depuis {quand(d)}" for m, s, d in en_ligne), 1024),
+                        inline=False)
+        if salons:
+            lignes = []
+            for nom, createur, cree, ferme, nb in salons:
+                etat = f"fermé après {t(ferme - cree)}" if ferme else "🟢 ouvert"
+                lignes.append(f"**{nom}** · créé par <@{createur}> {quand(cree)} · {etat} · {nb} personne(s)")
+            e.add_field(name="🆕 Derniers salons créés", value=_trim("\n".join(lignes), 1024), inline=False)
+        if passages:
+            lignes = [f"<@{uid}> · **{nom}** · {quand(debut)} · {t(fin - debut)}" for uid, nom, debut, fin in passages]
+            e.add_field(name="🕘 Derniers passages", value=_trim("\n".join(lignes), 1024), inline=False)
+        if not (en_ligne or salons or passages):
+            e.description = "Rien d'enregistré pour l'instant."
+        e.set_footer(text=f"Détail d'un membre : /historique-vocal · gardé {vocal_store.RETENTION_JOURS} jours")
+        await interaction.response.send_message(embed=e, ephemeral=True)
+
     async def _assurer_salon_invitations(self, guild):
         """Crée le salon « invitations » à côté des autres logs, avec les mêmes droits."""
         settings = await aload_json(GUILD_SETTINGS_FILE, {})

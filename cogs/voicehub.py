@@ -1,3 +1,4 @@
+import asyncio
 import os
 import random
 import time
@@ -7,6 +8,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from cogs._shared import handle_app_error
+from services import vocal_store
 from storage import aload_json, asave_json
 from services.setup_kit import (
     adopt_category,
@@ -452,6 +454,53 @@ class VoiceControlView(discord.ui.View):
         await _dans_le_chat(channel, f"🙋 {user.mention} a repris le salon, son propriétaire était parti.")
 
 
+async def journal_creation(bot, membre, salon):
+    """Log « salon créé par » + mémoire, pour le récapitulatif à sa fermeture."""
+    try:
+        await vocal_store.salon_cree(salon.guild.id, salon.id, salon.name, membre.id)
+    except Exception as e:
+        print(f"[voicehub] historique du salon non enregistré : {e}")
+    logs = bot.get_cog("Logs")
+    if logs is None:
+        return
+    e = discord.Embed(title="🆕 Salon vocal créé",
+                      description=f"{membre.mention} a créé **{salon.name}** via le hub.",
+                      color=discord.Color(COLORS["success"]))
+    e.set_footer(text=f"ID membre : {membre.id} · ID salon : {salon.id}")
+    await logs._log(salon.guild, "voice", e)
+
+
+def journal_fermeture(bot, salon):
+    """Récapitulatif à la suppression : qui l'a créé, combien de temps il a vécu, qui y
+    est passé et combien de temps. Lancé à part, 2 s plus tard : le dernier départ doit
+    d'abord avoir été enregistré par cogs/logs.py."""
+    async def recap():
+        await asyncio.sleep(2)
+        try:
+            info, passages = await vocal_store.salon_ferme(salon.id, salon.name)
+        except Exception as e:
+            print(f"[voicehub] récapitulatif impossible : {e}")
+            return
+        logs = bot.get_cog("Logs")
+        if logs is None:
+            return
+        from cogs.logs import _duree
+        import datetime
+        d = lambda s: _duree(datetime.timedelta(seconds=s))
+        e = discord.Embed(title="🗑️ Salon vocal fermé", description=f"**{salon.name}** s'est vidé et a été supprimé.",
+                          color=discord.Color(COLORS["grey"]))
+        if info:
+            createur, cree = info
+            e.add_field(name="Créé par", value=f"<@{createur}>")
+            e.add_field(name="Durée de vie", value=d(time.time() - cree))
+        if passages:
+            lignes = [f"<@{uid}> — {d(total)}" for uid, total, _ in passages[:20]]
+            e.add_field(name=f"👥 {len(passages)} personne(s) passée(s)", value="\n".join(lignes)[:1024], inline=False)
+        e.set_footer(text=f"ID salon : {salon.id}")
+        await logs._log(salon.guild, "voice", e)
+    asyncio.get_running_loop().create_task(recap())
+
+
 class VoiceHub(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -496,6 +545,7 @@ class VoiceHub(commands.Cog):
                 if (now - channel.created_at).total_seconds() < 60:
                     continue
                 self.temp_channels.discard(channel.id)
+                journal_fermeture(self.bot, channel)
                 try:
                     await channel.delete(reason="Salon vocal temporaire vide (balayage)")
                 except (discord.NotFound, discord.Forbidden):
@@ -607,6 +657,7 @@ class VoiceHub(commands.Cog):
             # on retient l'ID pour savoir plus tard qu'il faut le supprimer une fois vide,
             # sans dependre de sa categorie (le hub peut etre dans n'importe quelle categorie)
             self.temp_channels.add(new_channel.id)
+            await journal_creation(self.bot, member, new_channel)
 
             try:
                 await member.move_to(new_channel, reason="Salon vocal temporaire")
@@ -651,6 +702,7 @@ class VoiceHub(commands.Cog):
             is_temp = left.id in self.temp_channels or left.name.startswith(TEMP_CHANNEL_PREFIX)
             if is_temp:
                 self.temp_channels.discard(left.id)
+                journal_fermeture(self.bot, left)
                 try:
                     await left.delete(reason="Salon vocal temporaire vide")
                 except (discord.NotFound, discord.Forbidden):

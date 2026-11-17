@@ -83,3 +83,62 @@ def _purger():
 
 async def purger():
     await asyncio.to_thread(_purger)
+
+
+# ── salons perso créés par le hub : qui les crée, qui y passe ──────────────────
+
+def _creer_table_salons(db):
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS salons ("
+        " channel_id INTEGER PRIMARY KEY, guild_id INTEGER, nom TEXT, createur_id INTEGER,"
+        " cree REAL, ferme REAL)"
+    )
+
+
+def _salon_cree(row):
+    with _lock:
+        db = _conn()
+        _creer_table_salons(db)
+        with db:
+            db.execute("INSERT OR REPLACE INTO salons VALUES (?,?,?,?,?,NULL)", row)
+
+
+async def salon_cree(guild_id, channel_id, nom, createur_id):
+    await asyncio.to_thread(_salon_cree, (channel_id, guild_id, nom, createur_id, time.time()))
+
+
+def _salon_ferme(channel_id, nom):
+    with _lock:
+        db = _conn()
+        _creer_table_salons(db)
+        with db:
+            db.execute("UPDATE salons SET ferme = ?, nom = ? WHERE channel_id = ?", (time.time(), nom, channel_id))
+        info = db.execute("SELECT createur_id, cree FROM salons WHERE channel_id = ?", (channel_id,)).fetchone()
+        passages = db.execute(
+            "SELECT user_id, SUM(fin - debut), MIN(debut) FROM sessions WHERE channel_id = ? "
+            "GROUP BY user_id ORDER BY MIN(debut)", (channel_id,)).fetchall()
+    return info, passages
+
+
+async def salon_ferme(channel_id, nom):
+    """((créateur, création) ou None, [(membre, temps passé, première arrivée)…])."""
+    return await asyncio.to_thread(_salon_ferme, channel_id, nom)
+
+
+def _activite(guild_id, limite):
+    with _lock:
+        db = _conn()
+        _creer_table_salons(db)
+        passages = db.execute(
+            "SELECT user_id, channel_name, debut, fin FROM sessions WHERE guild_id = ? "
+            "ORDER BY fin DESC LIMIT ?", (guild_id, limite)).fetchall()
+        salons = db.execute(
+            "SELECT s.nom, s.createur_id, s.cree, s.ferme, "
+            " (SELECT COUNT(DISTINCT user_id) FROM sessions WHERE channel_id = s.channel_id) "
+            "FROM salons s WHERE s.guild_id = ? ORDER BY s.cree DESC LIMIT 10", (guild_id,)).fetchall()
+    return passages, salons
+
+
+async def activite(guild_id, limite=20):
+    """(derniers passages sur tout le serveur, 10 derniers salons créés)."""
+    return await asyncio.to_thread(_activite, guild_id, limite)
