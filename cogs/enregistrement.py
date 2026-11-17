@@ -23,6 +23,7 @@ silence calé sur l'horloge, sans quoi les voix se décaleraient au mixage.
 
 import asyncio
 import datetime
+import json
 import os
 import shutil
 import subprocess
@@ -74,8 +75,18 @@ class Pistes(voice_recv.AudioSink if voice_recv else object):
             ["ffmpeg", "-loglevel", "error", "-f", "s16le", "-ar", str(TAUX), "-ac", "2", "-i", "pipe:0",
              "-ac", "1", "-c:a", "libopus", "-b:a", "48k", "-y", chemin],
             stdin=subprocess.PIPE)
-        return {"proc": proc, "ecrits": 0, "decalage": time.monotonic() - self.debut,
-                "nom": getattr(user, "display_name", str(user)), "chemin": chemin}
+        piste = {"proc": proc, "ecrits": 0, "decalage": time.monotonic() - self.debut,
+                 "nom": getattr(user, "display_name", str(user)), "chemin": chemin}
+        # heure d'arrivée de chaque piste sur disque : si Saphir est coupé en pleine
+        # séance, le rattrapage au démarrage peut quand même les caler au mixage
+        meta = os.path.join(self.dossier, "pistes.json")
+        try:
+            infos = json.load(open(meta, encoding="utf-8")) if os.path.exists(meta) else {}
+            infos[str(user.id)] = {"decalage": piste["decalage"], "nom": piste["nom"]}
+            json.dump(infos, open(meta, "w", encoding="utf-8"), ensure_ascii=False)
+        except (OSError, ValueError):
+            pass
+        return piste
 
     def write(self, user, data):
         if user is None or getattr(user, "bot", False) or not data.pcm:
@@ -166,6 +177,27 @@ async def envoyer_en_parties(salon, entete, fichier, nom):
         await salon.send(texte, allowed_mentions=discord.AllowedMentions.none(),
                          file=discord.File(partie, filename=f"{nom}{suffixe}.mp3"))
     return True
+
+
+def marqueur(guild_id) -> str:
+    return os.path.join(DOSSIER_REC, f"actif-{guild_id}")
+
+
+def pistes_orphelines(dossier: str) -> list:
+    """Pistes d'une séance coupée, avec leur décalage (pistes.json) ou 0 à défaut."""
+    meta = os.path.join(dossier, "pistes.json")
+    try:
+        infos = json.load(open(meta, encoding="utf-8")) if os.path.exists(meta) else {}
+    except (OSError, ValueError):
+        infos = {}
+    pistes = []
+    for f in sorted(os.listdir(dossier)):
+        if f.endswith(".ogg") and os.path.getsize(os.path.join(dossier, f)) > 0:
+            uid = f[:-4]
+            info = infos.get(uid, {})
+            pistes.append({"chemin": os.path.join(dossier, f), "decalage": float(info.get("decalage", 0)),
+                           "nom": info.get("nom", f"<@{uid}>")})
+    return pistes
 
 
 def mixer(pistes: list, sortie: str) -> bool:
@@ -290,6 +322,8 @@ class Enregistrement(commands.Cog):
         session = {"vc": vc, "salon": salon, "pistes": pistes, "dossier": dossier,
                    "texte": interaction.channel, "lanceur": interaction.user, "debut": time.time()}
         self.sessions[guild.id] = session
+        # repère lu par deploy/auto-deploy.sh : pas de redémarrage pendant un /rec
+        open(marqueur(guild.id), "w").close()
 
         await self._annonce_vocale(vc, "debut")
         vc.listen(pistes)
@@ -344,6 +378,10 @@ class Enregistrement(commands.Cog):
         session = self.sessions.pop(guild_id, None)
         if session is None:
             return
+        try:
+            os.remove(marqueur(guild_id))
+        except OSError:
+            pass
         vc, salon, pistes = session["vc"], session["salon"], session["pistes"]
         try:
             if vc.is_listening():
@@ -394,20 +432,32 @@ class Enregistrement(commands.Cog):
                 await self._rattrapage(guild, salon)
 
     async def _rattrapage(self, guild, salon):
-        """Enregistrements restés sur le serveur (trop lourds avant le découpage, envoi
-        raté) : postés au démarrage, puis effacés."""
+        """Enregistrements restés sur le serveur : envoi raté, ou séance coupée par un
+        redémarrage (pistes jamais mixées). Mixés si besoin, postés, puis effacés."""
         try:
-            dossiers = sorted(d for d in os.listdir(DOSSIER_REC) if d.startswith(f"{guild.id}-"))
+            os.remove(marqueur(guild.id))     # séance d'avant le redémarrage : terminée
+        except OSError:
+            pass
+        try:
+            dossiers = sorted(d for d in os.listdir(DOSSIER_REC)
+                              if d.startswith(f"{guild.id}-") and os.path.isdir(os.path.join(DOSSIER_REC, d)))
         except FileNotFoundError:
             return
         for d in dossiers:
             chemin = os.path.join(DOSSIER_REC, d)
             mp3 = os.path.join(chemin, "enregistrement.mp3")
-            if any(s["dossier"] == chemin for s in self.sessions.values()) or not os.path.exists(mp3):
+            if any(s["dossier"] == chemin for s in self.sessions.values()):
                 continue
+            titre = "🎙️ **Enregistrement en attente**"
+            if not os.path.exists(mp3):
+                pistes = pistes_orphelines(chemin)
+                if not pistes or not await asyncio.to_thread(mixer, pistes, mp3):
+                    continue
+                titre = ("🎙️ **Enregistrement interrompu** (Saphir a redémarré pendant la séance)\n"
+                         f"Voix : {', '.join(p['nom'] for p in pistes)}")
             quand = discord.utils.format_dt(datetime.datetime.fromtimestamp(int(d.split("-")[1])), "f")
             try:
-                if await envoyer_en_parties(salon, f"🎙️ **Enregistrement en attente** (lancé le {quand})", mp3, f"rec-{d}"):
+                if await envoyer_en_parties(salon, f"{titre} · lancé le {quand}", mp3, f"rec-{d}"):
                     shutil.rmtree(chemin, ignore_errors=True)
             except discord.HTTPException as e:
                 print(f"[rec] rattrapage de {d} impossible : {e}")

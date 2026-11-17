@@ -11,6 +11,10 @@ deployer() {
     avant=$($g rev-parse HEAD)
     apres=$($g rev-parse origin/main)
     [ "$avant" = "$apres" ] && return
+    # un /rec en cours (repère posé par cogs/enregistrement.py) : on redémarrera après
+    if compgen -G "$dir/data/enregistrements/actif-*" > /dev/null; then
+        echo "[$service] enregistrement en cours : mise à jour reportée"; return
+    fi
     # on ne touche à rien si des fichiers suivis ont été modifiés à la main sur le VPS
     if ! $g diff --quiet; then
         echo "[$service] modifications locales sur le VPS : mise à jour suspendue"; return
