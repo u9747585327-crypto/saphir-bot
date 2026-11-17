@@ -5,9 +5,11 @@ membre.
 
 - le premier message du fil est la fiche : photo, pseudo, ID, création du compte, arrivée
   sur le serveur, rôles, anciens pseudos, temps passé en vocal, invitation utilisée ;
-- ensuite, tout ce que les logs enregistrent sur ce membre y est recopié au fil de l'eau
-  (sanctions, rôles, pseudos, arrivées et départs, vocal, messages supprimés…), ce qui
-  donne son historique complet au même endroit.
+- ensuite, tout ce que les logs enregistrent sur ce membre y est recopié au fil de l'eau,
+  à l'heure près : arrivées et départs, invitation utilisée, sanctions, rôles, pseudos,
+  vocal (connexions, changements, durée, micro, caméra…), messages supprimés ou modifiés
+  avec leurs images. Les logs d'origine restent en place ; le casier est une copie.
+- un membre qui quitte le serveur garde son casier, qui reprend s'il revient.
 
 Seules des informations que Discord donne au serveur sont utilisées. Le forum reprend
 les droits des autres salons de logs : invisible pour les membres.
@@ -32,8 +34,6 @@ NOM_FORUM = "「🗂️」casiers"
 HISTO_PSEUDOS = "data/historique_pseudos.json"
 DELAI_CREATION = 3          # s entre deux créations de casier au démarrage
 
-# événements trop fréquents et sans intérêt pour un casier
-TITRES_IGNORES = ("🎙️ Vocal (action perso)",)
 
 _MOTIFS_ID = (r"Cible ID : (\d{17,20})", r"^ID : (\d{17,20})", r"ID auteur : (\d{17,20})", r"ID membre : (\d{17,20})")
 
@@ -163,9 +163,9 @@ class Casiers(commands.Cog):
 
     # ── historique : appelé par cogs/logs.py pour chaque log envoyé ──────────
 
-    async def miroir(self, guild, embed):
-        if embed.title in TITRES_IGNORES:
-            return
+    async def miroir(self, guild, embed, pieces=None):
+        """Recopie un log dans le casier du membre concerné, pièces jointes comprises
+        (images d'un message supprimé…). Le log d'origine, lui, reste où il est."""
         uid = membre_concerne(embed)
         if uid is None:
             return
@@ -187,10 +187,20 @@ class Casiers(commands.Cog):
             fil = await self.casier(membre)
         if fil is None:
             return
+        logs = self.bot.get_cog("Logs")
+        fichiers = logs._construire(pieces) if (pieces and logs) else []
         try:
-            await fil.send(embed=embed.copy(), allowed_mentions=discord.AllowedMentions.none())
-        except discord.HTTPException as e:
-            print(f"[casiers] copie dans le casier {uid} impossible : {e}")
+            await fil.send(embed=embed.copy(), files=fichiers, allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException:
+            try:    # trop lourd avec les fichiers : le texte d'abord, les fichiers un par un
+                await fil.send(embed=embed.copy(), allowed_mentions=discord.AllowedMentions.none())
+                for piece in pieces or []:
+                    try:
+                        await fil.send(files=logs._construire([piece]))
+                    except discord.HTTPException:
+                        pass
+            except discord.HTTPException as e:
+                print(f"[casiers] copie dans le casier {uid} impossible : {e}")
 
     # ── démarrage, mises à jour, commande ────────────────────────────────────
 
