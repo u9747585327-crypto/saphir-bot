@@ -1202,8 +1202,16 @@ class Logs(commands.Cog):
         ids = settings.setdefault(str(guild.id), {}).setdefault("log_channel_ids", {})
         if guild.get_channel(ids.get("invites") or 0):
             return
-        modele = guild.get_channel(ids.get("server") or ids.get("voice") or 0)
+        # par ID si connu, sinon par nom (les ID ne sont mémorisés qu'après un /setup-logs)
+        modele = await self._channel_for(guild, "voice") or await self._channel_for(guild, "server")
         if modele is None:
+            print(f"[logs] {guild.name} : aucun salon de logs trouvé, salon invitations non créé")
+            return
+        existant = find_text_channel(guild, LOG_CHANNELS["invites"])
+        if existant is not None:
+            ids["invites"] = existant.id
+            await asave_json(GUILD_SETTINGS_FILE, settings)
+            self._log_ids.pop(guild.id, None)
             return
         try:
             salon = await guild.create_text_channel(LOG_CHANNELS["invites"], category=modele.category,
