@@ -1,0 +1,8 @@
+[Unit]
+Description=Déploiement automatique des bots depuis GitHub
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=GIT_SSH_COMMAND=ssh -i /opt/lumi-bot/.ssh/github_lumi -o UserKnownHostsFile=/opt/lumi-bot/.ssh/known_hosts -o IdentitiesOnly=yes
+ExecStart=/usr/local/bin/auto-deploy.sh
